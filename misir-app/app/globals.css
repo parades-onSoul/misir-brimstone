@@ -1,0 +1,308 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ============================================
+   LINEAR DESIGN SYSTEM - MISIR IMPLEMENTATION
+   ============================================ */
+
+:root {
+  /* ============================================
+     FONTS
+     ============================================ */
+  --font-regular: var(--font-inter), 
+                  "SF Pro Display", 
+                  -apple-system, 
+                  BlinkMacSystemFont, 
+                  "Segoe UI", 
+                  Roboto, 
+                  sans-serif;
+  --font-display: var(--font-regular);
+  --font-monospace: "Berkeley Mono", 
+                    "SFMono Regular", 
+                    Consolas, 
+                    Menlo, 
+                    monospace;
+
+  /* ============================================
+     FONT SIZES (Linear Scale)
+     ============================================ */
+  --font-size-micro: .6875rem;        /* 11px */
+  --font-size-mini: .75rem;           /* 12px */
+  --font-size-small: .8125rem;        /* 13px */
+  --font-size-regular: .9375rem;      /* 15px - Base */
+  --font-size-large: 1.125rem;        /* 18px */
+  --font-size-title1: 2.25rem;        /* 36px */
+  --font-size-title2: 1.5rem;         /* 24px */
+  --font-size-title3: 1.25rem;        /* 20px */
+
+  /* ============================================
+     FONT WEIGHTS
+     ============================================ */
+  --font-weight-light: 300;
+  --font-weight-normal: 450;          /* Inter Variable optimized */
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* ============================================
+     COLORS - DARK MODE (Primary)
+     ============================================ */
+  --color-bg-primary: lch(4.8% 0.7 272);
+  --color-bg-secondary: lch(10.633% 3.033 272 / 1);
+  --color-bg-tertiary: lch(14.133% 4.2 272 / 1);
+  --color-bg-quaternary: lch(7.133% 1.867 272 / 1);
+  --color-bg-sidebar: #08090a;
+
+  --color-text-primary: lch(100% 0 272 / 1);
+  --color-text-secondary: lch(90.65% 1.35 272 / 1);
+  --color-text-tertiary: lch(62.6% 1.35 272 / 1);
+  --color-text-quaternary: lch(38.29% 1.35 272 / 1);
+
+  --color-border-primary: lch(9.77% 3.54 272 / 1);
+  --color-border-secondary: lch(14.74% 3.54 272 / 1);
+  --color-border-tertiary: lch(19% 3.54 272 / 1);
+
+  --focus-color: lch(47.918% 59.303 288.421);
+  --focus-ring-color: lch(47.918% 59.303 288.421);
+  --focus-ring-width: 1px;
+  --focus-ring-offset: 0px;
+  --focus-ring-outline: var(--focus-ring-width) solid var(--focus-ring-color);
+
+  /* Destructive */
+  --color-destructive: lch(50% 68 25);
+  --color-destructive-foreground: lch(100% 0 272 / 1);
+
+  /* ============================================
+     MISIR STATE COLORS
+     ============================================ */
+  --state-latent: lch(38.29% 1.35 272 / 1);        /* Dark gray */
+  --state-discovered: lch(47.918% 59.303 288.421); /* Purple/Blue */
+  --state-engaged: lch(60% 40 50);                  /* Orange */
+  --state-saturated: lch(55% 55 30);                /* Red-Orange */
+
+  /* ============================================
+     CHART COLORS
+     ============================================ */
+  --chart-1: lch(60% 40 50);                        /* Orange */
+  --chart-2: lch(55% 35 180);                       /* Cyan */
+  --chart-3: lch(50% 40 270);                       /* Purple */
+  --chart-4: lch(65% 45 120);                       /* Green */
+  --chart-5: lch(58% 50 340);                       /* Magenta */
+
+  /* ============================================
+     LAYOUT
+     ============================================ */
+  --sidebar-width: 220px;
+  --header-height: 39px;
+  --radius: 5px;
+  --control-border-radius: 4px;
+  --radius-circle: 50%;
+  --radius-rounded: 9999px;
+
+  /* ============================================
+     ANIMATION
+     ============================================ */
+  --speed-highlightFadeIn: 0s;
+  --speed-highlightFadeOut: .15s;
+  --speed-quickTransition: .1s;
+  --speed-regularTransition: .25s;
+  --speed-slowTransition: .35s;
+
+  /* Easing */
+  --ease-in-out-cubic: cubic-bezier(.645, .045, .355, 1);
+  --ease-out-expo: cubic-bezier(.19, 1, .22, 1);
+
+  /* ============================================
+     EDITOR SPACING
+     ============================================ */
+  --editor-block-spacing: 1rem;
+  --editor-block-spacing-large: 1.375rem;
+  --editor-block-spacing-small: .375rem;
+  --editor-line-height: 1.6;
+  --editor-letter-spacing: -.00666667em;
+  --sidebar: hsl(0 0% 98%);
+  --sidebar-foreground: hsl(240 5.3% 26.1%);
+  --sidebar-primary: hsl(240 5.9% 10%);
+  --sidebar-primary-foreground: hsl(0 0% 98%);
+  --sidebar-accent: hsl(240 4.8% 95.9%);
+  --sidebar-accent-foreground: hsl(240 5.9% 10%);
+  --sidebar-border: hsl(220 13% 91%);
+  --sidebar-ring: hsl(217.2 91.2% 59.8%);
+}
+
+/* ============================================
+   TAILWIND THEME INTEGRATION
+   ============================================ */
+@theme inline {
+  /* Core Colors */
+  --color-background: var(--color-bg-primary);
+  --color-foreground: var(--color-text-primary);
+  --color-card: var(--color-bg-secondary);
+  --color-card-foreground: var(--color-text-primary);
+  --color-popover: var(--color-bg-tertiary);
+  --color-popover-foreground: var(--color-text-primary);
+
+  /* Primary (Focus/Accent) */
+  --color-primary: var(--focus-color);
+  --color-primary-foreground: var(--color-text-primary);
+
+  /* Secondary */
+  --color-secondary: var(--color-bg-tertiary);
+  --color-secondary-foreground: var(--color-text-primary);
+
+  /* Muted */
+  --color-muted: var(--color-bg-quaternary);
+  --color-muted-foreground: var(--color-text-tertiary);
+
+  /* Accent */
+  --color-accent: var(--focus-color);
+  --color-accent-foreground: var(--color-text-primary);
+
+  /* Destructive */
+  --color-destructive: var(--color-destructive);
+  --color-destructive-foreground: var(--color-destructive-foreground);
+
+  /* Borders & Inputs */
+  --color-border: var(--color-border-secondary);
+  --color-input: var(--color-border-secondary);
+  --color-ring: var(--focus-ring-color);
+
+  /* Charts (Misir State Colors) */
+  --color-chart-1: var(--state-latent);
+  --color-chart-2: var(--state-discovered);
+  --color-chart-3: var(--state-engaged);
+  --color-chart-4: var(--state-saturated);
+  --color-chart-5: var(--focus-color);
+
+  /* Sidebar */
+  --color-sidebar: var(--color-bg-sidebar);
+  --color-sidebar-foreground: var(--color-text-secondary);
+  --color-sidebar-primary: var(--focus-color);
+  --color-sidebar-primary-foreground: var(--color-text-primary);
+  --color-sidebar-accent: var(--color-bg-tertiary);
+  --color-sidebar-accent-foreground: var(--color-text-primary);
+  --color-sidebar-border: var(--color-border-secondary);
+  --color-sidebar-ring: var(--focus-ring-color);
+}
+
+/* ============================================
+   BASE STYLES (Linear Design)
+   ============================================ */
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+    touch-action: pan-x pan-y;
+  }
+
+  html {
+    background-color: var(--color-bg-primary);
+    height: 100%;
+    padding: 0;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-regular);
+    font-weight: var(--font-weight-normal);
+    font-size: var(--font-size-regular);
+    line-height: 1.5;
+
+    /* Font rendering (Linear optimization) */
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    -webkit-text-size-adjust: 100%;
+
+    /* User interaction */
+    user-select: none;
+    cursor: default;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+
+  /* Selection styling */
+  ::selection {
+    background: lch(62.6 1.35 272 / 0.2);
+  }
+
+  /* Typography defaults */
+  h1, h2, h3, h4, h5, h6 {
+    font-weight: var(--font-weight-semibold);
+  }
+
+  /* Link styling */
+  a {
+    color: var(--color-text-primary);
+    transition-property: color;
+    transition-duration: var(--speed-highlightFadeOut);
+    cursor: pointer;
+  }
+
+  a:hover {
+    color: var(--focus-color);
+  }
+
+  /* Button defaults */
+  button {
+    font-family: var(--font-regular);
+    cursor: pointer;
+  }
+
+  /* Placeholder text */
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-text-quaternary);
+  }
+
+  /* ============================================
+     SCROLLBAR - Linear Style
+     ============================================ */
+
+  /* Webkit browsers (Chrome, Safari, Edge) */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border-primary);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-border-secondary);
+  }
+
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-primary) transparent;
+  }
+}
+
+.dark {
+  --sidebar: hsl(240 5.9% 10%);
+  --sidebar-foreground: hsl(240 4.8% 95.9%);
+  --sidebar-primary: hsl(224.3 76.3% 48%);
+  --sidebar-primary-foreground: hsl(0 0% 100%);
+  --sidebar-accent: hsl(240 3.7% 15.9%);
+  --sidebar-accent-foreground: hsl(240 4.8% 95.9%);
+  --sidebar-border: hsl(240 3.7% 15.9%);
+  --sidebar-ring: hsl(217.2 91.2% 59.8%);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
