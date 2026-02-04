@@ -4,7 +4,7 @@ Search API — Semantic search endpoint.
 Endpoint:
 - GET /search — Search artifacts by semantic similarity
 """
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Header, Query
 from pydantic import BaseModel
 from typing import Optional
 import logging
@@ -45,10 +45,53 @@ def get_supabase_client() -> Client:
     return create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
 
 
+def get_current_user(
+    authorization: str = Header(None),
+    client: Client = Depends(get_supabase_client)
+) -> str:
+    """
+    Extract user_id from JWT token.
+    
+    When MOCK_AUTH=True (development), returns a mock user ID.
+    When MOCK_AUTH=False (production), validates JWT with Supabase.
+    """
+    settings = get_settings()
+    
+    if settings.MOCK_AUTH:
+        return settings.MOCK_USER_ID
+    
+    # Production authentication
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="Authorization header required")
+        
+        # Extract token from "Bearer <token>" format
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Invalid authorization format")
+        
+        token = authorization.split(" ")[1]
+        
+        # Verify JWT token with Supabase
+        user = client.auth.get_user(token)
+        if not user or not user.user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        return user.user.id
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {e}")
+
+
+from fastapi import Request
+from core.limiter import limiter
+
 @router.get("", response_model=SearchResponseModel)
+@limiter.limit("20/minute")
 async def search(
-    user_id: str,
+    request: Request,
     q: str = Query(..., description="Search query", min_length=1),
+    current_user_id: str = Depends(get_current_user),
     space_id: Optional[int] = Query(None, description="Filter by space"),
     subspace_id: Optional[int] = Query(None, description="Filter by subspace"),
     limit: int = Query(20, ge=1, le=100, description="Max results"),
@@ -74,7 +117,7 @@ async def search(
     try:
         handler = SearchHandler(client)
         cmd = SearchCommand(
-            user_id=user_id,
+            user_id=current_user_id,
             query=q,
             space_id=space_id,
             subspace_id=subspace_id,

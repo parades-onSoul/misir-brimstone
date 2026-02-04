@@ -53,8 +53,13 @@ def get_supabase_client() -> Client:
     return create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
 
 
+from fastapi import Request
+from core.limiter import limiter
+
 @router.get("", response_model=SpaceListResponse)
+@limiter.limit("50/minute")
 async def list_spaces(
+    request: Request,
     user_id: str,
     client: Client = Depends(get_supabase_client)
 ):
@@ -93,8 +98,10 @@ async def list_spaces(
 
 
 @router.post("", response_model=SpaceResponse, status_code=201)
+@limiter.limit("50/minute")
 async def create_space(
-    request: CreateSpaceRequest,
+    request: Request,
+    body: CreateSpaceRequest,
     client: Client = Depends(get_supabase_client)
 ):
     """
@@ -109,9 +116,9 @@ async def create_space(
     try:
         handler = SpaceHandler(client)
         cmd = CreateSpaceCommand(
-            user_id=request.user_id,
-            name=request.name,
-            description=request.description
+            user_id=body.user_id,
+            name=body.name,
+            description=body.description
         )
         result = await handler.create(cmd)
         
@@ -130,7 +137,9 @@ async def create_space(
 
 
 @router.get("/{space_id}", response_model=SpaceResponse)
+@limiter.limit("50/minute")
 async def get_space(
+    request: Request,
     space_id: int,
     user_id: str,
     client: Client = Depends(get_supabase_client)

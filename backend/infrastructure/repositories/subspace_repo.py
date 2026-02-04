@@ -5,10 +5,12 @@ Subspaces are semantic clusters within spaces.
 For v1, we only need read operations (subspaces created via signals).
 """
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 import logging
 
 from supabase import Client
+from domain.entities.analytics import SubspaceVelocity, SubspaceDrift
 
 logger = logging.getLogger(__name__)
 
@@ -366,3 +368,203 @@ class SubspaceRepository:
         except Exception as e:
             logger.error(f"Failed to get stats: {e}")
             raise
+
+    async def add_marker(
+        self,
+        subspace_id: int,
+        marker_id: int,
+        weight: float = 1.0,
+        source: str = "manual"
+    ) -> bool:
+        """
+        Associate a marker with a subspace (Junction Table).
+        
+        Args:
+            subspace_id: Subspace ID
+            marker_id: Marker ID
+            weight: Relevance weight (0.0-1.0)
+            source: Source of association (manual, auto)
+            
+        Returns:
+            True if successful
+        """
+        try:
+            data = {
+                'subspace_id': subspace_id,
+                'marker_id': marker_id,
+                'weight': weight,
+                'source': source
+            }
+            
+            response = (
+                self._client.schema('misir')
+                .from_('subspace_marker')
+                .insert(data)
+                .execute()
+            )
+            
+            return len(response.data or []) > 0
+            
+        except Exception as e:
+            logger.error(f"Failed to add marker: {e}")
+            # Likely duplicate key error if exists
+            raise
+
+    async def remove_marker(
+        self,
+        subspace_id: int,
+        marker_id: int
+    ) -> bool:
+        """
+        Remove marker association from subspace.
+        
+        Args:
+            subspace_id: Subspace ID
+            marker_id: Marker ID
+            
+        Returns:
+            True if removed
+        """
+        try:
+            response = (
+                self._client.schema('misir')
+                .from_('subspace_marker')
+                .delete()
+                .eq('subspace_id', subspace_id)
+                .eq('marker_id', marker_id)
+                .execute()
+            )
+            
+            return len(response.data or []) > 0
+            
+        except Exception as e:
+            logger.error(f"Failed to remove marker: {e}")
+            raise
+
+    async def get_markers(
+        self,
+        subspace_id: int
+    ) -> list[dict]:
+        """
+        Get all markers for a subspace.
+        
+        Returns:
+            List of dicts with marker details and weight
+        """
+        try:
+            response = (
+                self._client.schema('misir')
+                .from_('subspace_marker')
+                .select('weight, source, marker:marker_id(id, term, embedding)')
+                .eq('subspace_id', subspace_id)
+                .execute()
+            )
+            
+            return response.data or []
+            
+        except Exception as e:
+            logger.error(f"Failed to get markers: {e}")
+            raise
+
+    async def log_velocity(
+        self,
+        subspace_id: int,
+        velocity: float,
+        displacement: list[float]
+    ) -> bool:
+        """Log subspace velocity."""
+        try:
+            self._client.schema('misir').from_('subspace_velocity').insert({
+                'subspace_id': subspace_id,
+                'velocity': velocity,
+                'displacement': displacement
+            }).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to log velocity: {e}")
+            return False
+
+    async def log_drift(
+        self,
+        subspace_id: int,
+        drift_magnitude: float,
+        previous_centroid: list[float],
+        new_centroid: list[float],
+        trigger_signal_id: int
+    ) -> bool:
+        """Log subspace drift event."""
+        try:
+            self._client.schema('misir').from_('subspace_drift').insert({
+                'subspace_id': subspace_id,
+                'drift_magnitude': drift_magnitude,
+                'previous_centroid': previous_centroid,
+                'new_centroid': new_centroid,
+                'trigger_signal_id': trigger_signal_id
+            }).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to log drift: {e}")
+            return False
+            
+    async def get_velocity_history(
+        self,
+        subspace_id: int,
+        limit: int = 50
+    ) -> list[SubspaceVelocity]:
+        """Get velocity history."""
+        try:
+            response = (
+                self._client.schema('misir')
+                .from_('subspace_velocity')
+                .select('*')
+                .eq('subspace_id', subspace_id)
+                .order('measured_at', desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return [
+                SubspaceVelocity(
+                    subspace_id=row['subspace_id'],
+                    space_id=0, # Not fetched in this query, optimization
+                    velocity=row['velocity'],
+                    displacement=row['displacement'],
+                    measured_at=datetime.fromisoformat(row['measured_at'])
+                )
+                for row in (response.data or [])
+            ]
+        except Exception as e:
+            logger.error(f"Failed to get velocity history: {e}")
+            return []
+
+    async def get_drift_history(
+        self,
+        subspace_id: int,
+        limit: int = 50
+    ) -> list[SubspaceDrift]:
+        """Get drift history."""
+        try:
+            response = (
+                self._client.schema('misir')
+                .from_('subspace_drift')
+                .select('*')
+                .eq('subspace_id', subspace_id)
+                .order('occurred_at', desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return [
+                SubspaceDrift(
+                    id=row['id'],
+                    subspace_id=row['subspace_id'],
+                    space_id=0,
+                    drift_magnitude=row['drift_magnitude'],
+                    previous_centroid=row['previous_centroid'],
+                    new_centroid=row['new_centroid'],
+                    trigger_signal_id=row['trigger_signal_id'],
+                    occurred_at=datetime.fromisoformat(row['occurred_at'])
+                )
+                for row in (response.data or [])
+            ]
+        except Exception as e:
+            logger.error(f"Failed to get drift history: {e}")
+            return []

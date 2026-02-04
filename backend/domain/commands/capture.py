@@ -94,3 +94,29 @@ class CreateSubspaceCommand:
     description: Optional[str] = None
     initial_centroid: Optional[list[float]] = None
     learning_rate: float = 0.1
+
+
+@dataclass(frozen=True)
+class UpdateArtifactCommand:
+    """Command to update an existing artifact."""
+    artifact_id: int
+    user_id: str
+    
+    # Updateable fields (all optional)
+    title: Optional[str] = None
+    content: Optional[str] = None
+    engagement_level: Optional[str] = None  # semantics enforced by repo
+    reading_depth: Optional[float] = None
+    
+    def __post_init__(self):
+        """Validate command."""
+        if self.reading_depth is not None and not 0.0 <= self.reading_depth <= 1.5:
+            raise ValueError(f"reading_depth must be 0-1.5, got {self.reading_depth}")
+
+
+@dataclass(frozen=True)
+class DeleteArtifactCommand:
+    """Command to soft-delete an artifact."""
+    artifact_id: int
+    user_id: str
+

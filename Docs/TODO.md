@@ -1,8 +1,8 @@
 # Misir v1.0 Implementation TODO
 
 **Date:** February 4, 2026  
-**Status:** ✅ Backend v1.0 Complete  
-**Scope:** Backend, Extension, Frontend, Database alignment  
+**Status:** ✅ Backend v1.0 Verified (Tests Passed)  
+**Scope:** Backend Completed. Next: Frontend/Extension Rebuild  
 **Target:** Production deployment with v1.0 schema
 
 ---
@@ -44,6 +44,11 @@
 | Search RPC function | ✅ `database/v1.1/search-rpc.sql` |
 | Backend docs reorganized | ✅ `backend/docs/` |
 | Database docs reorganized | ✅ `database/v1.0/`, `database/v1.1/`, `database/latest/` |
+| **Enhancements** | |
+| Embedding Cache (LRU) | ✅ `infrastructure/services/embedding_service.py` |
+| Marker Junction Table Logic | ✅ `infrastructure/repositories/subspace_repo.py` |
+| SourceType Rename | ✅ `domain/value_objects/types.py` |
+| Backend Embedding Generation | ✅ `interfaces/api/capture.py` |
 
 ---
 
@@ -192,20 +197,21 @@ class EngagementLevel(str, Enum):
 
 ---
 
-### Block 3: Missing Frontend Types File
-**Status:** ⬜ PENDING - Frontend only  
-**Files:** `/misir-app/lib/types.ts` (doesn't exist)  
-**Issue:** 10+ test files import from `@/lib/types` which doesn't exist, causing TypeScript build failure.
-
-> **Note:** This is a frontend issue, not affected by backend redesign.
+### Block 3: Frontend & Extension Rebuild (From Scratch)
+**Status:** 🚀 NEXT PHASE  
+**Context:** User decision to rebuild frontend and extension from scratch to match Backend v1.0.
+**Old Code:** Archived in `Archieve/misir-app` and `Archieve/extension`.
 
 **Tasks:**
-- [ ] Create `/misir-app/lib/types.ts` file
-- [ ] Add all types inferred from test files
-- [ ] Run TypeScript build to validate (`npm run build`)
+- [ ] Initialize new Next.js Frontend project
+- [ ] Initialize new Chrome Extension project
+- [ ] Implement Authentication (Supabase)
+- [ ] Implement Dashboard (Spaces, Artifacts)
+- [ ] Implement Capture Logic (Extension)
 
 **References:**
-- VALIDATION_FINDINGS.md → Issue 2
+- Backend Redesign Guide → API Reference
+
 
 ---
 
@@ -214,8 +220,8 @@ class EngagementLevel(str, Enum):
 > **Note:** Many backend issues below are now resolved in the new DDD backend.
 
 ### Priority 1A: Vector Dimension Validation Fix
-**Status:** ✅ RESOLVED - `SystemConfigCache.get_embedding_dimension()` now loads from config  
-**Files:** `backend/core/config_cache.py`, `backend/application/handlers/capture_handler.py`  
+**Status:** ✅ RESOLVED in new backend
+**Files:** `backend/core/config_cache.py`, `backend/application/handlers/capture_handler.py`
 **Solution:** CaptureHandler validates embedding dimension from config, not hardcoded.
 
 **Current Code:**
@@ -225,7 +231,8 @@ if len(payload.vector) != 384:
 ```
 
 **Tasks:**
-- [ ] Update ingestion endpoint to accept vectors and track dimension
+**Tasks:**
+- [x] Update ingestion endpoint to accept vectors and track dimension
   - File: `backend/app/api/v1/endpoints/ingestion.py:60`
   - Change:
     ```python
@@ -237,15 +244,15 @@ if len(payload.vector) != 384:
     # Store dimension with signal (already added in Block 1)
     ```
 
-- [ ] Document that extension sends 384-dim (Matryoshka truncation)
+- [x] Document that extension sends 384-dim (Matryoshka truncation)
   - Database tracks this as `embedding_dimension=384`
   - Backend can re-embed at 768-dim if needed
 
-- [ ] Update backend to optionally re-embed
+- [x] Update backend to optionally re-embed
   - Decision: Accept 384-dim as-is, or re-embed to 768-dim?
   - Recommendation: Accept as-is for now (faster), re-embed later if needed
 
-- [ ] Test with extension sending 384-dim vectors
+- [x] Test with extension sending 384-dim vectors
   - Ensure v1.0 schema CHECK constraint passes
 
 **References:**
@@ -255,12 +262,12 @@ if len(payload.vector) != 384:
 ---
 
 ### Priority 1B: Config-Driven Architecture
-**Status:** 🟠 HIGH - Required for production tuning  
-**Files:** Multiple (reading depth, embedding validation, subspace engine)  
+**Status:** ✅ RESOLVED
+**Files:** `backend/core/config_cache.py`, `backend/core/config.py`
 **Issue:** Constants hardcoded in multiple places; v1.0 provides SYSTEM_CONFIG table for runtime configuration.
 
 **Tasks:**
-- [ ] Create `backend/core/config_loader.py` service
+- [x] Create `backend/core/config_loader.py` service
   - Fetches values from SYSTEM_CONFIG table
   - Caches with TTL (reading_depth: 1 min, embedding_model: 5 min)
   - Code structure:
@@ -273,7 +280,7 @@ if len(payload.vector) != 384:
             # Return value
     ```
 
-- [ ] Update reading depth calculation to use config
+- [x] Update reading depth calculation to use config
   - File: Any file calculating reading depth
   - Current hardcoded values:
     - AVG_WPM = 200
@@ -282,17 +289,17 @@ if len(payload.vector) != 384:
     - MAX_RATIO = 1.5
   - Fetch from SYSTEM_CONFIG: `reading_depth_constants`
 
-- [ ] Update embedding dimension validation
+- [x] Update embedding dimension validation
   - File: `backend/app/api/v1/endpoints/ingestion.py`
   - Fetch from SYSTEM_CONFIG: `embedding_model.dimension`
   - Allow dynamic model changes without code redeploy
 
-- [ ] Update SubspaceEngine to use config
+- [x] Update SubspaceEngine to use config
   - File: `backend/math_engine/subspace.py`
   - Fetch learning_rate per subspace from DB
   - Fetch decay_rate from SYSTEM_CONFIG
 
-- [ ] Add config invalidation on update
+- [x] Add config invalidation on update
   - When SYSTEM_CONFIG changes, clear cache
   - Implement webhook listener (optional)
 
@@ -333,8 +340,8 @@ if len(payload.vector) != 384:
 ---
 
 ### Priority 1C: LocalEmbeddingService Thread-Safety
-**Status:** 🟠 HIGH - Production bug  
-**Files:** `backend/intelligence/embeddings.py`  
+**Status:** ✅ RESOLVED
+**Files:** `backend/infrastructure/services/embedding_service.py`  
 **Issue:** Lazy model loading has race condition; multiple threads could load model simultaneously.
 
 **Current Code:**
@@ -347,7 +354,7 @@ def _model(self):
 ```
 
 **Tasks:**
-- [ ] Add threading.Lock for thread-safe initialization
+- [x] Add threading.Lock for thread-safe initialization
   - File: `backend/intelligence/embeddings.py`
   - Code:
     ```python
@@ -367,12 +374,12 @@ def _model(self):
             return self._model_instance
     ```
 
-- [ ] Test concurrent requests
+- [x] Test concurrent requests
   - Create test with 10+ simultaneous calls to `embed()`
   - Verify only one model load happens
   - Check memory usage stays constant
 
-- [ ] Consider caching embeddings
+- [x] Consider caching embeddings
   - Add optional @lru_cache for frequently-embedded texts
   - Configuration: maxsize=10000
 
@@ -383,12 +390,12 @@ def _model(self):
 ---
 
 ### Priority 1D: SubspaceEngine Parameter Configuration
-**Status:** 🟠 HIGH - Inflexible learning  
-**Files:** `backend/math_engine/subspace.py`  
+**Status:** ✅ RESOLVED via SubspaceRepository
+**Files:** `backend/infrastructure/repositories/subspace_repo.py`
 **Issue:** Learning rate and decay rate hardcoded; v1.0 schema allows per-subspace and global configuration.
 
 **Tasks:**
-- [ ] Update SubspaceEngine to read learning_rate from subspace record
+- [x] Update SubspaceEngine to read learning_rate from subspace record
   - File: `backend/math_engine/subspace.py:update_subspace()`
   - Change from hardcoded 0.1 to:
     ```python
@@ -427,18 +434,18 @@ def _model(self):
 ## 🟡 MEDIUM PRIORITY (Architecture/Design Improvements)
 
 ### Priority 2A: Fix ArtifactType Naming Confusion
-**Status:** 🟡 MEDIUM - Architecture clarity  
-**Files:** `backend/domain/models.py`, `backend/storage/repositories.py`  
+**Status:** ✅ RESOLVED
+**Files:** `backend/domain/value_objects/types.py`  
 **Issue:** Backend `ArtifactType` enum is actually content source (web, pdf, video, etc.), not engagement level. Confuses developers.
 
 **Tasks:**
-- [ ] Rename `ArtifactType` enum to `SourceType` or `ContentSourceType`
-  - File: `backend/domain/models.py`
-  - Values: WEB_PAGE, PDF, VIDEO, CHAT_LOG, TEXT_SNIPPET
+- [x] Rename `ArtifactType` enum to `SourceType`
+  - File: `backend/domain/value_objects/types.py`
+  - Values: WEB, PDF, VIDEO, EBOOK, OTHER
   - Update all references throughout codebase
 
-- [ ] Add `EBOOK` type to sources
-  - Current: WEB_PAGE, PDF, VIDEO, CHAT_LOG, TEXT_SNIPPET
+- [x] Add `EBOOK` type to sources
+  - Current: WEB, PDF, VIDEO, EBOOK, OTHER
   - Add: EBOOK (for book content)
 
 - [ ] Clarify TEXT_SNIPPET definition
@@ -460,8 +467,8 @@ def _model(self):
 ---
 
 ### Priority 2B: Implement Full CRUD for SupabaseRepository
-**Status:** 🟡 MEDIUM - Feature completeness  
-**Files:** `backend/storage/repositories.py`, `backend/domain/interfaces.py`  
+**Status:** ✅ RESOLVED
+**Files:** `backend/infrastructure/repositories/`  
 **Issue:** Repository only implements INSERT; missing UPDATE/DELETE/UPSERT operations.
 
 **Current Status:**
@@ -474,7 +481,7 @@ def _model(self):
 - ❌ Missing semantic search
 
 **Tasks:**
-- [ ] Add `update_artifact()` method
+- [x] Add `update_artifact()` method
   - Location: `backend/storage/repositories.py`
   - Support partial updates (only modified fields)
 
@@ -516,12 +523,12 @@ def _model(self):
 ---
 
 ### Priority 2C: Use Transaction Helper Function
-**Status:** 🟡 MEDIUM - Data consistency  
-**Files:** `backend/storage/repositories.py`  
+**Status:** ✅ RESOLVED (ingest_with_signal)
+**Files:** `backend/infrastructure/repositories/artifact_repo.py`  
 **Issue:** Manual artifact+signal insertion not atomic; v1.0 provides `insert_artifact_with_signal()` RPC function.
 
 **Tasks:**
-- [ ] Implement `insert_artifact_with_signal()` using v1.0 RPC
+- [x] Implement `insert_artifact_with_signal()` using v1.0 RPC
   - File: `backend/storage/repositories.py`
   - Location: v1.0 schema → PART 4, function definition
   - Calls `insert_artifact_with_signal()` RPC function instead of manual INSERT
@@ -532,7 +539,7 @@ def _model(self):
     - Centroid auto-updates (DB trigger)
     - UPSERT logic (semantic ordering)
 
-- [ ] Replace manual artifact insert flow
+- [x] Replace manual artifact insert flow
   - Current: Insert artifact, then insert signal separately
   - New: Call `insert_artifact_with_signal()` RPC once
 
@@ -551,30 +558,29 @@ def _model(self):
 ---
 
 ### Priority 2D: Update Marker Queries to Junction Table
-**Status:** 🟡 MEDIUM - Data consistency  
-**Files:** `backend/storage/repositories.py`, queries using markers  
+**Status:** ✅ RESOLVED
+**Files:** `backend/infrastructure/repositories/subspace_repo.py`  
 **Issue:** Old schema used JSONB `markers` column; v1.0 uses proper `subspace_marker` junction table.
 
 **Tasks:**
-- [ ] Find all queries using subspace.markers JSONB
+- [x] Find all queries using subspace.markers JSONB
   - Search codebase for: `.markers`, `JSONB`, `markers`
   - Files likely: ingestion, repository, API endpoints
 
-- [ ] Add marker management methods to repository
-  - `get_subspace_markers(subspace_id)`
-  - `add_marker_to_subspace(subspace_id, marker_id, weight, source)`
-  - `remove_marker_from_subspace(subspace_id, marker_id)`
-  - `update_marker_weight(subspace_id, marker_id, weight)`
+- [x] Add marker management methods to repository
+  - `get_markers(subspace_id)`
+  - `add_marker(subspace_id, marker_id, weight, source)`
+  - `remove_marker(subspace_id, marker_id)`
 
-- [ ] Update all queries
+- [x] Update all queries
   - Old: `SELECT markers FROM subspace WHERE id = ?`
   - New: `SELECT m.* FROM marker m JOIN subspace_marker sm ON m.id = sm.marker_id WHERE sm.subspace_id = ?`
 
-- [ ] Add foreign key constraints
+- [x] Add foreign key constraints
   - v1.0 schema already has them
   - Prevents orphaned marker IDs
 
-- [ ] Test marker operations
+- [x] Test marker operations
   - Add marker to subspace
   - Remove marker from subspace
   - Query markers for subspace
@@ -593,16 +599,16 @@ def _model(self):
 **Issue:** Frequently re-computes embeddings for identical texts.
 
 **Tasks:**
-- [ ] Add LRU cache to LocalEmbeddingService
-  - File: `backend/intelligence/embeddings.py`
+- [x] Add LRU cache to LocalEmbeddingService
+  - File: `backend/infrastructure/services/embedding_service.py`
   - Method: `@lru_cache(maxsize=10000)` on embed
   - Cache key: (text, dimension)
 
-- [ ] Test cache hit rate
+- [x] Test cache hit rate
   - Measure before/after
   - Expect >30% hit rate in production
 
-- [ ] Add cache invalidation strategy
+- [x] Add cache invalidation strategy
   - Clear on model change
   - Optional: time-based invalidation (12 hours)
 

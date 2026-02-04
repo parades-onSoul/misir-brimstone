@@ -28,12 +28,13 @@ class EngagementLevel(str, Enum):
         return order.index(self.value) > order.index(other.value)
 
 
-class ContentSource(str, Enum):
+class SourceType(str, Enum):
     """Source type for artifacts."""
     WEB = 'web'
     PDF = 'pdf'
     VIDEO = 'video'
-    EBOOK = 'ebook'
+    CHAT = 'chat'
+    NOTE = 'note'
     OTHER = 'other'
 
 

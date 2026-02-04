@@ -1,7 +1,7 @@
 """Domain layer exports."""
 from domain.entities import Artifact, Signal, Space, Subspace, Marker
 from domain.value_objects import (
-    EngagementLevel, ContentSource, SignalType,
+    EngagementLevel, SourceType, SignalType,
     EmbeddingVector, NormalizedUrl, ReadingMetrics
 )
 from domain.commands import (
@@ -13,7 +13,7 @@ __all__ = [
     # Entities
     'Artifact', 'Signal', 'Space', 'Subspace', 'Marker',
     # Value Objects
-    'EngagementLevel', 'ContentSource', 'SignalType',
+    'EngagementLevel', 'SourceType', 'SignalType',
     'EmbeddingVector', 'NormalizedUrl', 'ReadingMetrics',
     # Commands
     'CaptureArtifactCommand', 'SearchSignalsCommand',

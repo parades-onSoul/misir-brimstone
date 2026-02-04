@@ -137,6 +137,24 @@ class EmbeddingService:
         
         return truncated
     
+    @lru_cache(maxsize=10000)
+    def _cached_encode(self, prefixed_text: str) -> np.ndarray:
+        """
+        Cached encoding of text.
+        
+        Uses LRU cache to avoid re-computing embeddings for:
+        - Frequent queries
+        - Duplicate content
+        
+        Returns:
+            Full-dimension embedding vector
+        """
+        return self._model.encode(
+            prefixed_text,
+            normalize_embeddings=True,
+            show_progress_bar=False
+        )
+
     def embed_text(
         self, 
         text: str, 
@@ -170,12 +188,8 @@ class EmbeddingService:
         # For general embedding, use document prefix
         prefixed_text = f"search_document: {text}"
         
-        # Encode with model (always at max dimension)
-        raw_vector = self._model.encode(
-            prefixed_text,
-            normalize_embeddings=True,  # L2 normalize
-            show_progress_bar=False
-        )
+        # Use cached encoding
+        raw_vector = self._cached_encode(prefixed_text)
         
         # Apply Matryoshka truncation if needed
         if target_dim < len(raw_vector):
@@ -213,11 +227,7 @@ class EmbeddingService:
         # Use query prefix for search queries
         prefixed_query = f"search_query: {query}"
         
-        raw_vector = self._model.encode(
-            prefixed_query,
-            normalize_embeddings=True,
-            show_progress_bar=False
-        )
+        raw_vector = self._cached_encode(prefixed_query)
         
         if target_dim < len(raw_vector):
             final_vector = self._truncate_and_normalize(raw_vector, target_dim)

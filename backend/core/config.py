@@ -20,11 +20,22 @@ class Settings(BaseSettings):
     SUPABASE_KEY: str  # anon key for client
     SUPABASE_SERVICE_KEY: str = ""  # service role for admin ops
     
+    # Authentication
+    MOCK_AUTH: bool = True  # Set to False in production to require real JWT tokens
+    MOCK_USER_ID: str = "test-user-123"  # Only used when MOCK_AUTH=True
+    
+    # Rate Limiting
+    RATE_LIMIT_STORAGE: str = "memory"  # "memory" or "redis"
+    REDIS_URL: str = "redis://localhost:6379"  # Only used when RATE_LIMIT_STORAGE=redis
+    
     # CORS
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://localhost:5173",
     ]
+    
+    # Logging
+    LOG_LEVEL: str = "INFO"
     
     # Embedding Service
     EMBEDDING_MODEL: str = "nomic-ai/nomic-embed-text-v1.5"

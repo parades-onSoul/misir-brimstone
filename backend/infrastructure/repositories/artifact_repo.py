@@ -7,9 +7,11 @@ No generic save() — only intentional commands.
 from dataclasses import dataclass
 from typing import Optional
 import logging
+import asyncio
+from functools import partial
 
 from supabase import Client
-from domain.commands import CaptureArtifactCommand
+from domain.commands import CaptureArtifactCommand, UpdateArtifactCommand
 from core.config_cache import config_cache
 
 logger = logging.getLogger(__name__)
@@ -79,11 +81,12 @@ class ArtifactRepository:
             if cmd.captured_at:
                 params['p_captured_at'] = cmd.captured_at.isoformat()
             
-            # Call RPC
-            response = self._client.schema('misir').rpc(
-                'insert_artifact_with_signal',
-                params
-            ).execute()
+            # Call RPC (run in executor to avoid blocking event loop)
+            loop = asyncio.get_event_loop()
+            rpc_call = partial(
+                self._client.schema('misir').rpc('insert_artifact_with_signal', params).execute
+            )
+            response = await loop.run_in_executor(None, rpc_call)
             
             if response.data and len(response.data) > 0:
                 row = response.data[0]
@@ -102,19 +105,25 @@ class ArtifactRepository:
     
     async def find_by_id(self, artifact_id: int) -> Optional[dict]:
         """Find artifact by ID."""
-        response = self._client.schema('misir').from_('artifact').select('*').eq('id', artifact_id).execute()
+        loop = asyncio.get_event_loop()
+        query_call = partial(
+            self._client.schema('misir').from_('artifact').select('*').eq('id', artifact_id).execute
+        )
+        response = await loop.run_in_executor(None, query_call)
         return response.data[0] if response.data else None
     
     async def find_by_url(self, user_id: str, normalized_url: str) -> Optional[dict]:
         """Find artifact by normalized URL (user-scoped)."""
-        response = (
+        loop = asyncio.get_event_loop()
+        query_call = partial(
             self._client.schema('misir')
             .from_('artifact')
             .select('*')
             .eq('user_id', user_id)
             .eq('normalized_url', normalized_url)
-            .execute()
+            .execute
         )
+        response = await loop.run_in_executor(None, query_call)
         return response.data[0] if response.data else None
     
     async def search_by_space(
@@ -136,3 +145,69 @@ class ArtifactRepository:
             .execute()
         )
         return response.data or []
+
+    async def delete_artifact(self, artifact_id: int, user_id: str) -> bool:
+        """
+        Soft delete an artifact.
+        
+        Args:
+            artifact_id: ID of artifact to delete
+            user_id: Owner user ID
+            
+        Returns:
+            True if deleted, False if not found
+        """
+        try:
+            response = (
+                self._client.schema('misir')
+                .from_('artifact')
+                .update({'deleted_at': 'now()'})
+                .eq('id', artifact_id)
+                .eq('user_id', user_id)
+                .is_('deleted_at', 'null')
+                .execute()
+            )
+            return len(response.data or []) > 0
+        except Exception as e:
+            logger.error(f"Failed to delete artifact: {e}")
+            raise
+
+    async def update_artifact(self, cmd: UpdateArtifactCommand) -> bool:
+        """
+        Update artifact fields.
+        
+        Args:
+            cmd: Update command with new values
+            
+        Returns:
+            True if updated
+        """
+        try:
+            data = {}
+            if cmd.title is not None:
+                data['title'] = cmd.title
+            if cmd.content is not None:
+                data['content'] = cmd.content
+            if cmd.engagement_level is not None:
+                data['engagement_level'] = cmd.engagement_level
+            if cmd.reading_depth is not None:
+                data['reading_depth'] = cmd.reading_depth
+                
+            if not data:
+                return False
+
+            data['updated_at'] = 'now()'
+
+            response = (
+                self._client.schema('misir')
+                .from_('artifact')
+                .update(data)
+                .eq('id', cmd.artifact_id)
+                .eq('user_id', cmd.user_id)
+                .is_('deleted_at', 'null')
+                .execute()
+            )
+            return len(response.data or []) > 0
+        except Exception as e:
+            logger.error(f"Failed to update artifact: {e}")
+            raise

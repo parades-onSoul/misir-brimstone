@@ -1,6 +1,6 @@
 # Misir Database Schema — Latest
 
-> **Current Version:** v1.1 (with v1.0 as base)  
+> **Current Version:** v1.4 (with v1.0 as base)  
 > **Codename:** shiro.exe  
 > **Date:** February 2026
 
@@ -10,7 +10,10 @@
 
 | Version | Description | Status |
 |---------|-------------|--------|
-| [**v1.1**](../v1.1/) | Assignment Margin | ✅ Latest |
+| [**v1.4**](../v1.4/) | Analytics Support | ✅ Latest |
+| [v1.3](../v1.3/) | Webhook Support | 📦 Stable |
+| [v1.2](../v1.2/) | Enum Alignment | 📦 Stable |
+| [v1.1](../v1.1/) | Assignment Margin | 📦 Stable |
 | [v1.0](../v1.0/) | Production base | 📦 Stable |
 
 ---
@@ -28,18 +31,34 @@ psql misir -f ../v1.0/schema.sql
 # Apply security fixes
 psql misir -f ../v1.0/security-fixes.sql
 
-# Apply v1.1 migration
+# Apply all migrations
 psql misir -f ../v1.1/migration.sql
+psql misir -f ../v1.2/migration.sql
+psql misir -f ../v1.3/migration.sql
+psql misir -f ../v1.4/migration.sql
+```
+
+### Upgrade from v1.3
+
+```bash
+# Backup first
+pg_dump misir > backup_pre_v1.4.sql
+
+# Apply v1.4 migration
+psql misir -f ../v1.4/migration.sql
 ```
 
 ### Upgrade from v1.0
 
 ```bash
 # Backup first
-pg_dump misir > backup_pre_v1.1.sql
+pg_dump misir > backup_pre_upgrades.sql
 
-# Apply v1.1 migration
+# Apply all missing migrations
 psql misir -f ../v1.1/migration.sql
+psql misir -f ../v1.2/migration.sql
+psql misir -f ../v1.3/migration.sql
+psql misir -f ../v1.4/migration.sql
 ```
 
 ---
@@ -68,7 +87,7 @@ psql misir -f ../v1.1/migration.sql
 | Enum | Values |
 |------|--------|
 | `engagement_level` | latent, discovered, engaged, saturated |
-| `content_source` | web, pdf, video, ebook, other |
+| `content_source` | web, pdf, video, chat, note, other |
 | `signal_type` | semantic, marker, hybrid |
 | `insight_type` | pattern, anomaly, recommendation |
 | `event_type` | schema_change, config_change, etc. |

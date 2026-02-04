@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from domain.commands import CaptureArtifactCommand
 from infrastructure.repositories import ArtifactRepository, CaptureResult
 from core.config_cache import config_cache
+from infrastructure.services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,26 @@ class CaptureHandler:
         # 3. Delegate to repository (DB is arbiter)
         result = await self._repo.ingest_with_signal(cmd)
         
+        # 4. Trigger Webhooks (fire-and-forget)
+        try:
+            webhook_svc = WebhookService()
+            event_type = "artifact.created" if result.is_new else "artifact.updated"
+            await webhook_svc.dispatch_event(
+                user_id=cmd.user_id,
+                event_type=event_type,
+                payload={
+                    "artifact_id": result.artifact_id,
+                    "signal_id": result.signal_id,
+                    "url": cmd.url,
+                    "title": cmd.title,
+                    "space_id": cmd.space_id,
+                    "subspace_id": cmd.subspace_id
+                }
+            )
+        except Exception as e:
+            # Webhook failure should not fail the request
+            logger.warning(f"Failed to dispatch webhook: {e}")
+        
         logger.info(
             f"Captured artifact: id={result.artifact_id}, "
             f"signal={result.signal_id}, is_new={result.is_new}"
@@ -114,12 +135,16 @@ class CaptureHandler:
             )
         
         # Check engagement level is valid
-        valid_levels = ['latent', 'discovered', 'engaged', 'saturated']
+        # Use EngagementLevel enum values
+        from domain.value_objects import EngagementLevel
+        valid_levels = [e.value for e in EngagementLevel]
         if cmd.engagement_level not in valid_levels:
             errors.append(f"Invalid engagement_level: {cmd.engagement_level}")
         
         # Check content source is valid
-        valid_sources = ['web', 'pdf', 'video', 'ebook', 'other']
+        # Use SourceType enum values
+        from domain.value_objects import SourceType
+        valid_sources = [t.value for t in SourceType]
         if cmd.content_source not in valid_sources:
             errors.append(f"Invalid content_source: {cmd.content_source}")
         

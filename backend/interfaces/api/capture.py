@@ -6,15 +6,18 @@ Only responsibilities:
 - Auth
 - Route to handler
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
+from supabase import Client
 
+from core.config import get_settings
 from domain.commands import CaptureArtifactCommand
 from application.handlers import CaptureHandler
 from infrastructure.repositories import ArtifactRepository
 from infrastructure.repositories.base import get_supabase_client
+from infrastructure.services.embedding_service import get_embedding_service
 
 router = APIRouter()
 
@@ -22,10 +25,11 @@ router = APIRouter()
 # Request/Response DTOs
 class CaptureRequest(BaseModel):
     """API request for artifact capture."""
-    user_id: str
     space_id: int
     url: str
-    embedding: list[float]
+    
+    # Optional - calculated by backend if missing
+    embedding: Optional[list[float]] = None
     
     # Metrics (client-provided)
     reading_depth: float = Field(ge=0.0, le=1.5)
@@ -44,6 +48,10 @@ class CaptureRequest(BaseModel):
     signal_type: str = 'semantic'
     matched_marker_ids: list[int] = []
     captured_at: Optional[datetime] = None
+    
+    # v1.1 Assignment Margin parameters  
+    margin: Optional[float] = None
+    updates_centroid: bool = True
 
 
 class CaptureResponse(BaseModel):
@@ -61,9 +69,53 @@ def get_handler() -> CaptureHandler:
     return CaptureHandler(repo)
 
 
+def get_current_user(
+    authorization: str = Header(None),
+    client: Client = Depends(get_supabase_client)
+) -> str:
+    """
+    Extract user_id from JWT token.
+    
+    When MOCK_AUTH=True (development), returns a mock user ID.
+    When MOCK_AUTH=False (production), validates JWT with Supabase.
+    """
+    settings = get_settings()
+    
+    if settings.MOCK_AUTH:
+        return settings.MOCK_USER_ID
+    
+    # Production authentication
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="Authorization header required")
+        
+        # Extract token from "Bearer <token>" format
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Invalid authorization format")
+        
+        token = authorization.split(" ")[1]
+        
+        # Verify JWT token with Supabase
+        user = client.auth.get_user(token)
+        if not user or not user.user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        return user.user.id
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {e}")
+
+
+from fastapi import Request
+from core.limiter import limiter
+
 @router.post("/capture", response_model=CaptureResponse)
+@limiter.limit("100/minute")
 async def capture_artifact(
-    request: CaptureRequest,
+    request: Request,
+    body: CaptureRequest,
+    current_user_id: str = Depends(get_current_user),
     handler: CaptureHandler = Depends(get_handler)
 ):
     """
@@ -77,26 +129,41 @@ async def capture_artifact(
     - Centroid updates
     """
     try:
+        # Handle embedding generation
+        embedding = body.embedding
+        if not embedding:
+            # If no vector provided, we must have content to embed
+            text_to_embed = body.content or body.title
+            if not text_to_embed:
+                raise ValueError("Either 'embedding' or 'content'/'title' must be provided")
+            
+            # Generate embedding
+            svc = get_embedding_service()
+            result = svc.embed_text(text_to_embed)
+            embedding = result.vector
+
         # Convert request to command
         cmd = CaptureArtifactCommand(
-            user_id=request.user_id,
-            space_id=request.space_id,
-            url=request.url,
-            embedding=request.embedding,
-            reading_depth=request.reading_depth,
-            scroll_depth=request.scroll_depth,
-            dwell_time_ms=request.dwell_time_ms,
-            word_count=request.word_count,
-            engagement_level=request.engagement_level,
-            content_source=request.content_source,
-            subspace_id=request.subspace_id,
-            session_id=request.session_id,
-            title=request.title,
-            content=request.content,
-            signal_magnitude=request.signal_magnitude,
-            signal_type=request.signal_type,
-            matched_marker_ids=tuple(request.matched_marker_ids),
-            captured_at=request.captured_at,
+            user_id=current_user_id,
+            space_id=body.space_id,
+            url=body.url,
+            embedding=embedding,
+            reading_depth=body.reading_depth,
+            scroll_depth=body.scroll_depth,
+            dwell_time_ms=body.dwell_time_ms,
+            word_count=body.word_count,
+            engagement_level=body.engagement_level,
+            content_source=body.content_source,
+            subspace_id=body.subspace_id,
+            session_id=body.session_id,
+            title=body.title,
+            content=body.content,
+            signal_magnitude=body.signal_magnitude,
+            signal_type=body.signal_type,
+            matched_marker_ids=tuple(body.matched_marker_ids),
+            margin=body.margin,
+            updates_centroid=body.updates_centroid,
+            captured_at=body.captured_at,
         )
         
         # Handle command

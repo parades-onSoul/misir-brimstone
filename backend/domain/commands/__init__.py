@@ -4,6 +4,8 @@ from domain.commands.capture import (
     SearchSignalsCommand,
     CreateSpaceCommand,
     CreateSubspaceCommand,
+    UpdateArtifactCommand,
+    DeleteArtifactCommand,
 )
 
 __all__ = [
@@ -11,4 +13,6 @@ __all__ = [
     'SearchSignalsCommand',
     'CreateSpaceCommand',
     'CreateSubspaceCommand',
+    'UpdateArtifactCommand',
+    'DeleteArtifactCommand',
 ]

@@ -1,7 +1,7 @@
 """Value objects exports."""
 from domain.value_objects.types import (
     EngagementLevel,
-    ContentSource,
+    SourceType,
     SignalType,
     EmbeddingVector,
     NormalizedUrl,
@@ -10,7 +10,7 @@ from domain.value_objects.types import (
 
 __all__ = [
     'EngagementLevel',
-    'ContentSource', 
+    'SourceType', 
     'SignalType',
     'EmbeddingVector',
     'NormalizedUrl',

@@ -7,7 +7,7 @@ These map to database tables but contain no DB logic.
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
-from domain.value_objects import EngagementLevel, ContentSource, SignalType
+from domain.value_objects import EngagementLevel, SourceType, SignalType
 
 
 @dataclass
@@ -30,7 +30,7 @@ class Artifact:
     
     # Engagement (client-provided, DB-validated)
     engagement_level: EngagementLevel = EngagementLevel.LATENT
-    content_source: ContentSource = ContentSource.WEB
+    content_source: SourceType = SourceType.WEB
     dwell_time_ms: int = 0
     scroll_depth: float = 0.0
     reading_depth: float = 0.0
