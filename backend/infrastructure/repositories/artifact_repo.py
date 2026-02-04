@@ -82,7 +82,7 @@ class ArtifactRepository:
                 params['p_captured_at'] = cmd.captured_at.isoformat()
             
             # Call RPC (run in executor to avoid blocking event loop)
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             rpc_call = partial(
                 self._client.schema('misir').rpc('insert_artifact_with_signal', params).execute
             )
@@ -105,7 +105,7 @@ class ArtifactRepository:
     
     async def find_by_id(self, artifact_id: int) -> Optional[dict]:
         """Find artifact by ID."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         query_call = partial(
             self._client.schema('misir').from_('artifact').select('*').eq('id', artifact_id).execute
         )
@@ -114,7 +114,7 @@ class ArtifactRepository:
     
     async def find_by_url(self, user_id: str, normalized_url: str) -> Optional[dict]:
         """Find artifact by normalized URL (user-scoped)."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         query_call = partial(
             self._client.schema('misir')
             .from_('artifact')

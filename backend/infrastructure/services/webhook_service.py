@@ -16,7 +16,7 @@ import logging
 import time
 import httpx
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import partial
 
 from core.config import get_settings
@@ -50,7 +50,7 @@ class WebhookService:
         """
         # 1. Fetch active subscriptions for this user and event type
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             
             def query_subscriptions():
                 response = (
@@ -89,7 +89,7 @@ class WebhookService:
     async def _create_webhook_event(self, subscription_id: int, event_type: str, payload: Dict[str, Any]) -> Optional[int]:
         """Create a webhook event record for tracking."""
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             
             def insert_event():
                 response = (
@@ -135,7 +135,7 @@ class WebhookService:
                 full_payload = {
                     "id": f"evt_{event_id}_{int(time.time()*1000)}",
                     "type": event_data['event_type'],
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                     "data": event_data['payload']
                 }
                 json_payload = json.dumps(full_payload)
@@ -187,7 +187,7 @@ class WebhookService:
     async def _get_event_payload(self, event_id: int) -> Optional[Dict[str, Any]]:
         """Get event payload by ID."""
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             
             def query_event():
                 response = (
@@ -208,7 +208,7 @@ class WebhookService:
     async def _update_event_attempt(self, event_id: int, attempt_count: int):
         """Update event attempt count and timestamp."""
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             
             def update_event():
                 return (
@@ -216,7 +216,7 @@ class WebhookService:
                     .from_("webhook_event")
                     .update({
                         "attempts": attempt_count,
-                        "last_attempt_at": datetime.utcnow().isoformat(),
+                        "last_attempt_at": datetime.now(timezone.utc).isoformat(),
                         "status": "retrying" if attempt_count > 1 else "pending"
                     })
                     .eq("id", event_id)
@@ -231,7 +231,7 @@ class WebhookService:
     async def _mark_event_success(self, event_id: int):
         """Mark event as successfully delivered."""
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             
             def update_status():
                 return (
@@ -250,7 +250,7 @@ class WebhookService:
     async def _mark_event_failed(self, event_id: int):
         """Mark event as permanently failed."""
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             
             def update_status():
                 return (
@@ -278,10 +278,10 @@ class WebhookService:
             Number of events queued for retry
         """
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             
             # Get failed events older than 1 hour
-            cutoff_time = datetime.utcnow() - timedelta(hours=1)
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=1)
             
             def query_failed():
                 response = (
@@ -318,7 +318,7 @@ class WebhookService:
     async def _reset_event_for_retry(self, event_id: int):
         """Reset event status for retry."""
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             
             def reset_status():
                 return (

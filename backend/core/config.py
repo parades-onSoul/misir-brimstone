@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     # Embedding Service
     EMBEDDING_MODEL: str = "nomic-ai/nomic-embed-text-v1.5"
     
+    # Analytics Thresholds
+    DRIFT_THRESHOLD: float = 0.05  # Minimum drift to trigger logging (5%)
+    CONFIDENCE_LEARNING_RATE: float = 0.05  # EMA learning rate for confidence updates
+    MARKER_DECAY_RATE: float = 0.1  # Decay rate for marker weights (10%)
+    MARKER_MIN_WEIGHT: float = 0.01  # Minimum marker weight floor (1%)
+    SUBSPACE_LEARNING_RATE: float = 0.1  # Default learning rate for centroid updates
+    
     # ConfigDict replaces deprecated class Config
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -16,6 +16,7 @@ from core.config import get_settings
 from domain.commands import CaptureArtifactCommand
 from application.handlers import CaptureHandler
 from infrastructure.repositories import ArtifactRepository
+from infrastructure.repositories.subspace_repo import SubspaceRepository
 from infrastructure.repositories.base import get_supabase_client
 from infrastructure.services.embedding_service import get_embedding_service
 
@@ -66,7 +67,8 @@ def get_handler() -> CaptureHandler:
     """Dependency injection for handler."""
     client = get_supabase_client()
     repo = ArtifactRepository(client)
-    return CaptureHandler(repo)
+    subspace_repo = SubspaceRepository(client)
+    return CaptureHandler(repo, subspace_repo)
 
 
 def get_current_user(

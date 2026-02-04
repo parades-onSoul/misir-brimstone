@@ -7,7 +7,7 @@ import asyncio
 import logging
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from infrastructure.repositories.base import get_supabase_client
 from supabase import Client
@@ -61,7 +61,7 @@ class ConfigValidator:
         config = {}
         
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             
             def query_config():
                 response = (
@@ -196,7 +196,7 @@ class ConfigValidator:
             DriftTestResult or None if subspace not found
         """
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             
             # Get subspace details
             def query_subspace():
@@ -253,7 +253,7 @@ class ConfigValidator:
     async def _get_recent_velocity(self, subspace_id: int) -> Optional[float]:
         """Get most recent velocity measurement for a subspace."""
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             
             def query_velocity():
                 response = (
@@ -285,8 +285,8 @@ class ConfigValidator:
             Summary statistics
         """
         try:
-            loop = asyncio.get_event_loop()
-            cutoff_date = datetime.utcnow() - timedelta(days=days)
+            loop = asyncio.get_running_loop()
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
             
             def query_analytics():
                 # Get drift events

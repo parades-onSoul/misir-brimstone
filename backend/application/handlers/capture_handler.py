@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from domain.commands import CaptureArtifactCommand
 from infrastructure.repositories import ArtifactRepository, CaptureResult
+from infrastructure.repositories.subspace_repo import SubspaceRepository
 from core.config_cache import config_cache
 from infrastructure.services.webhook_service import WebhookService
 
@@ -39,8 +40,9 @@ class CaptureHandler:
     - Modify engagement_level (DB handles semantic ordering)
     """
     
-    def __init__(self, repo: ArtifactRepository):
+    def __init__(self, repo: ArtifactRepository, subspace_repo: Optional[SubspaceRepository] = None):
         self._repo = repo
+        self._subspace_repo = subspace_repo
     
     async def handle(self, cmd: CaptureArtifactCommand) -> CaptureResult:
         """
@@ -66,7 +68,29 @@ class CaptureHandler:
         # 3. Delegate to repository (DB is arbiter)
         result = await self._repo.ingest_with_signal(cmd)
         
-        # 4. Trigger Webhooks (fire-and-forget)
+        # 4. Update confidence based on batch coherence (if subspace provided)
+        if cmd.subspace_id and self._subspace_repo:
+            try:
+                # Get current subspace state
+                subspace = await self._subspace_repo.find_by_id(
+                    subspace_id=cmd.subspace_id,
+                    user_id=cmd.user_id
+                )
+                
+                if subspace and subspace.centroid_embedding:
+                    # Update confidence using this single embedding as "batch"
+                    await self._subspace_repo.update_confidence_from_batch(
+                        subspace_id=cmd.subspace_id,
+                        user_id=cmd.user_id,
+                        batch_embeddings=[cmd.embedding],
+                        current_centroid=subspace.centroid_embedding,
+                        current_confidence=subspace.confidence or 0.5
+                    )
+            except Exception as e:
+                # Confidence update failure should not fail the capture
+                logger.warning(f"Failed to update confidence for subspace {cmd.subspace_id}: {e}")
+        
+        # 5. Trigger Webhooks (fire-and-forget)
         try:
             webhook_svc = WebhookService()
             event_type = "artifact.created" if result.is_new else "artifact.updated"

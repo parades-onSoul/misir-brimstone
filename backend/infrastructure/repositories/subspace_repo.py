@@ -5,10 +5,11 @@ Subspaces are semantic clusters within spaces.
 For v1, we only need read operations (subspaces created via signals).
 """
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 import logging
 
+from core.config import get_settings
 from supabase import Client
 from domain.entities.analytics import SubspaceVelocity, SubspaceDrift
 
@@ -204,7 +205,7 @@ class SubspaceRepository:
         name: str,
         description: Optional[str] = None,
         initial_centroid: Optional[list[float]] = None,
-        learning_rate: float = 0.1
+        learning_rate: float = None
     ) -> SubspaceResult:
         """
         Create a new subspace.
@@ -215,12 +216,16 @@ class SubspaceRepository:
             name: Subspace name
             description: Optional description
             initial_centroid: Optional initial centroid embedding
-            learning_rate: Learning rate for EMA (default 0.1)
+            learning_rate: Learning rate for EMA (defaults to config.SUBSPACE_LEARNING_RATE)
         
         Returns:
             SubspaceResult with created subspace
         """
         try:
+            if learning_rate is None:
+                config = get_settings()
+                learning_rate = config.SUBSPACE_LEARNING_RATE
+            
             data = {
                 'user_id': user_id,
                 'space_id': space_id,
@@ -264,24 +269,33 @@ class SubspaceRepository:
         subspace_id: int,
         user_id: str,
         new_centroid: list[float],
-        confidence: Optional[float] = None
+        confidence: Optional[float] = None,
+        previous_centroid: Optional[list[float]] = None,
+        trigger_signal_id: Optional[int] = None,
+        space_id: Optional[int] = None,
+        last_updated: Optional[datetime] = None
     ) -> bool:
         """
-        Update subspace centroid (manual override).
+        Update subspace centroid with drift/velocity tracking.
         
         Note: Normally centroids are updated by DB trigger.
-        This is for manual corrections or initialization.
+        This is for manual corrections or when using analytics.
         
         Args:
             subspace_id: Subspace ID
             user_id: Owner user ID
             new_centroid: New centroid embedding
             confidence: Optional new confidence value
+            previous_centroid: Previous centroid for drift calculation
+            trigger_signal_id: Signal that triggered update (for drift logging)
+            space_id: Space ID (for drift logging)
+            last_updated: Timestamp of last update (for velocity)
         
         Returns:
             True if updated, False if not found
         """
         try:
+            # Prepare update data
             data = {
                 'centroid_embedding': new_centroid,
                 'centroid_updated_at': 'now()',
@@ -289,6 +303,40 @@ class SubspaceRepository:
             if confidence is not None:
                 data['confidence'] = confidence
             
+            # If we have drift tracking info, calculate and log analytics
+            if previous_centroid and trigger_signal_id and space_id:
+                from infrastructure.services.subspace_analytics import SubspaceAnalyticsService
+                analytics = SubspaceAnalyticsService()
+                
+                # Calculate drift
+                drift = analytics.calculate_drift(previous_centroid, new_centroid)
+                
+                # Log drift if significant
+                if analytics.should_log_drift(drift):
+                    await self.log_drift(
+                        subspace_id=subspace_id,
+                        drift_magnitude=drift,
+                        previous_centroid=previous_centroid,
+                        new_centroid=new_centroid,
+                        trigger_signal_id=trigger_signal_id
+                    )
+                
+                # Calculate and log velocity if timestamp provided
+                if last_updated:
+                    time_delta = (datetime.now(timezone.utc) - last_updated).total_seconds()
+                    velocity, displacement = analytics.calculate_velocity(
+                        previous_centroid, 
+                        new_centroid, 
+                        time_delta
+                    )
+                    
+                    await self.log_velocity(
+                        subspace_id=subspace_id,
+                        velocity=velocity,
+                        displacement=displacement
+                    )
+            
+            # Update centroid
             response = (
                 self._client.schema('misir')
                 .from_('subspace')
@@ -339,6 +387,72 @@ class SubspaceRepository:
         except Exception as e:
             logger.error(f"Failed to update learning rate: {e}")
             raise
+    
+    async def update_confidence_from_batch(
+        self,
+        subspace_id: int,
+        user_id: str,
+        batch_embeddings: list[list[float]],
+        current_centroid: list[float],
+        current_confidence: float,
+        learning_rate: float = None
+    ) -> Optional[float]:
+        """
+        Calculate and update confidence based on batch coherence.
+        
+        Uses batch coherence (average similarity to centroid) to update
+        confidence via exponential moving average.
+        
+        Args:
+            subspace_id: Subspace ID
+            user_id: Owner user ID
+            batch_embeddings: New embeddings being added
+            current_centroid: Current centroid vector
+            current_confidence: Current confidence value
+            learning_rate: How quickly to adapt confidence (defaults to config.CONFIDENCE_LEARNING_RATE)
+            
+        Returns:
+            New confidence value, or None if update failed
+        """
+        try:
+            if learning_rate is None:
+                config = get_settings()
+                learning_rate = config.CONFIDENCE_LEARNING_RATE
+            
+            from infrastructure.services.subspace_analytics import SubspaceAnalyticsService
+            analytics = SubspaceAnalyticsService()
+            
+            # Calculate batch coherence
+            batch_coherence = analytics.calculate_batch_coherence(
+                batch_embeddings,
+                current_centroid
+            )
+            
+            # Update confidence using EMA
+            new_confidence = analytics.update_confidence(
+                current_confidence,
+                batch_coherence,
+                learning_rate
+            )
+            
+            # Persist to database
+            response = (
+                self._client.schema('misir')
+                .from_('subspace')
+                .update({'confidence': new_confidence})
+                .eq('id', subspace_id)
+                .eq('user_id', user_id)
+                .execute()
+            )
+            
+            if response.data and len(response.data) > 0:
+                logger.info(f"Updated confidence for subspace {subspace_id}: {current_confidence:.3f} → {new_confidence:.3f} (coherence: {batch_coherence:.3f})")
+                return new_confidence
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to update confidence: {e}")
+            return None
     
     async def get_stats(
         self,
@@ -464,6 +578,68 @@ class SubspaceRepository:
             
         except Exception as e:
             logger.error(f"Failed to get markers: {e}")
+            raise
+    
+    async def decay_marker_weights(
+        self,
+        subspace_id: int,
+        decay_rate: float = None,
+        min_weight: float = None
+    ) -> int:
+        """
+        Apply time-based decay to all marker weights in a subspace.
+        
+        Implements decay floor to prevent weights from reaching zero.
+        Formula: new_weight = max(old_weight * (1 - decay_rate), min_weight)
+        
+        Args:
+            subspace_id: Subspace ID
+            decay_rate: Fraction to decay (defaults to config.MARKER_DECAY_RATE)
+            min_weight: Minimum weight floor (defaults to config.MARKER_MIN_WEIGHT)
+            
+        Returns:
+            Number of markers updated
+        """
+        try:
+            if decay_rate is None or min_weight is None:
+                config = get_settings()
+                if decay_rate is None:
+                    decay_rate = config.MARKER_DECAY_RATE
+                if min_weight is None:
+                    min_weight = config.MARKER_MIN_WEIGHT
+            
+            # Get current markers
+            markers = await self.get_markers(subspace_id)
+            
+            if not markers:
+                return 0
+            
+            updated_count = 0
+            
+            for marker in markers:
+                current_weight = marker.get('weight', 1.0)
+                
+                # Apply decay with floor
+                new_weight = max(
+                    current_weight * (1 - decay_rate),
+                    min_weight
+                )
+                
+                # Only update if weight changed
+                if abs(new_weight - current_weight) > 0.0001:
+                    self._client.schema('misir').from_('subspace_marker').update({
+                        'weight': new_weight
+                    }).eq('subspace_id', subspace_id).eq(
+                        'marker_id', 
+                        marker['marker']['id']
+                    ).execute()
+                    
+                    updated_count += 1
+            
+            return updated_count
+            
+        except Exception as e:
+            logger.error(f"Failed to decay marker weights: {e}")
             raise
 
     async def log_velocity(

@@ -3,7 +3,7 @@ Analytics Entities — Domain objects for system analytics.
 Mapped to analytics tables (or computed on fly in v1).
 """
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict
 
 
