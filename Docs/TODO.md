@@ -1,20 +1,39 @@
 # Misir v1.0 Implementation TODO
 
 **Date:** February 4, 2026  
-**Status:** ✅ Backend v1.0 Verified (Tests Passed)  
-**Scope:** Backend Completed. Next: Frontend/Extension Rebuild  
-**Target:** Production deployment with v1.0 schema
+**Status:** ✅ Backend v1.0 Complete + Analytics Implemented  
+**Scope:** Backend Production-Ready. Next: Frontend/Extension Rebuild  
+**Target:** Production deployment with v1.0 schema + Full Analytics
 
 ---
 
 ## 🎯 Quick Summary
 
 - **Backend v1.0 (shiro.exe)** — DDD architecture complete ✅
+- **Analytics System** — Drift, Velocity, Confidence tracking ✅
 - **Algorithm Spec v1** — OSCL, WESA, SDD, ISS documented ✅
 - **Database v1.1** — Assignment Margin migration complete ✅
 - **All Repositories** — Artifact, Space, Subspace, Signal ✅
 - **All Handlers** — Capture, Space, Search ✅
 - **Embedding Service** — Thread-safe, Matryoshka truncation ✅
+- **Production Ready** — Auth config, Redis scaling, Metrics ✅
+
+---
+
+## ✅ Completed (Latest Session)
+
+| Item | Status | Date |
+|------|--------|------|
+| SubspaceAnalyticsService | ✅ Complete | Feb 4, 2026 |
+| Drift tracking & logging | ✅ Implemented | Feb 4, 2026 |
+| Velocity calculations | ✅ Implemented | Feb 4, 2026 |
+| Batch coherence confidence | ✅ Implemented | Feb 4, 2026 |
+| Marker decay floor fix | ✅ Implemented | Feb 4, 2026 |
+| Enhanced update_centroid | ✅ Auto-tracks drift/velocity | Feb 4, 2026 |
+| Timezone-aware datetime | ✅ Modernized | Feb 4, 2026 |
+| asyncio.get_running_loop | ✅ Updated Python 3.10+ | Feb 4, 2026 |
+| Config-driven thresholds | ✅ Moved to Settings | Feb 4, 2026 |
+| Analytics documentation | ✅ ANALYTICS_IMPLEMENTATION.md | Feb 4, 2026 |
 
 ---
 
@@ -82,11 +101,21 @@
 ### 3️⃣ SDD — Semantic Drift & Dynamics Detection
 **What it is:** Cosine similarity drift detection + velocity tracking  
 **Formula:** `drift = 1 - (new_centroid ⊗ old_centroid)`
+**Status:** ✅ IMPLEMENTED
 | Component | File | Role |
 |-----------|------|------|
-| Dispersion | `math_engine/spatial.py` | Signal spread measurement |
-| Drift | `math_engine/dynamics.py` | Vector difference |
-| Velocity | `math_engine/dynamics.py` | `drift / time` |
+| SubspaceAnalyticsService | `infrastructure/services/subspace_analytics.py` | ✅ Drift & velocity calculations |
+| Drift Detection | `infrastructure/repositories/subspace_repo.py` | ✅ Auto-logs drift >0.05 threshold |
+| Velocity Tracking | `infrastructure/repositories/subspace_repo.py` | ✅ Calculates displacement/time |
+| Confidence Updates | `application/handlers/capture_handler.py` | ✅ EMA-based batch coherence |
+| Config-driven | `core/config.py` | ✅ DRIFT_THRESHOLD, CONFIDENCE_LEARNING_RATE |
+
+**Implementation Details:**
+- `calculate_drift()` - Returns 1 - cosine_similarity (0 = no drift, 2 = complete reversal)
+- `calculate_velocity()` - Displacement per second with time delta tracking
+- `calculate_batch_coherence()` - Average similarity of batch to centroid
+- `update_confidence()` - Exponential moving average: `(1-lr)*old + lr*coherence`
+- Auto-logging when drift exceeds threshold (configurable, default 0.05)
 
 **Future:** Acceleration (change in velocity), subspace splitting on sustained drift
 
@@ -109,6 +138,10 @@
 | Concept | Description | Status |
 |---------|-------------|--------|
 | **Assignment Margin** | `margin = d₂ - d₁` to avoid ambiguous updates | ✅ Implemented (v1.1 migration + MarginService) |
+| **Drift Detection** | Cosine similarity-based centroid movement tracking | ✅ Implemented (SubspaceAnalyticsService) |
+| **Velocity Tracking** | Displacement per second for subspace dynamics | ✅ Implemented (auto-calculated on centroid updates) |
+| **Confidence Updates** | EMA-based confidence from batch coherence | ✅ Implemented (runs on every capture) |
+| **Marker Decay Floor** | Prevent marker weights from reaching zero | ✅ Implemented (min_weight=0.01 default) |
 | **Signal Reliability** | `effective_weight × reliability` | ⬜ Roadmap |
 | **Forgetting Threshold** | Retire subspace if weight < ε for T time | ⬜ Roadmap |
 | **IIS (Implicit Interest Scoring)** | `Σ effective_weight × signal_type_weight` | ⬜ Roadmap |
@@ -407,27 +440,29 @@ def _model(self):
   - Fetch from SYSTEM_CONFIG (requires ConfigLoader from Priority 1B)
   - Or pass as parameter
 
-- [ ] Add velocity calculation (currently unused)
-  - Compute: velocity = new_centroid - old_centroid
-  - Store in subspace.velocity
-  - Use for trend analysis
+- [x] Add velocity calculation
+  - ✅ Implemented in SubspaceAnalyticsService
+  - ✅ Computes displacement magnitude per second
+  - ✅ Auto-logged on centroid updates
 
-- [ ] Add confidence updates (currently constant)
-  - Compute: new_confidence = 0.95 * old + 0.05 * batch_coherence
-  - Track how coherent the subspace is
+- [x] Add confidence updates
+  - ✅ Implemented via batch coherence
+  - ✅ Formula: new_confidence = (1 - lr) * old + lr * coherence
+  - ✅ Runs automatically on every signal capture
 
-- [ ] Fix marker decay floor
-  - Add: marker.weight = max(marker.weight, 0.01)
-  - Prevents weights decaying to zero
+- [x] Fix marker decay floor
+  - ✅ Implemented: marker.weight = max(decayed, min_weight)
+  - ✅ Default min_weight = 0.01 (prevents zero)
+  - ✅ Configurable via Settings.MARKER_MIN_WEIGHT
 
-- [ ] Return new subspace instead of mutating
-  - Functional style (immutable)
-  - Prevents side effects
+- [x] Return new subspace instead of mutating
+  - ✅ Functional style in analytics service
+  - ✅ Repository methods return updated values
 
 **References:**
-- VALIDATION_FINDINGS.md → Issue 5
-- Backend Redesign Guide → Section 2 (Config-Driven Architecture)
-- DATA_DEFINITIONS_ANALYSIS.md → SubspaceEngine section
+- ANALYTICS_IMPLEMENTATION.md → Complete implementation guide
+- backend/infrastructure/services/subspace_analytics.py → Service implementation
+- backend/infrastructure/repositories/subspace_repo.py → Integration
 
 ---
 
