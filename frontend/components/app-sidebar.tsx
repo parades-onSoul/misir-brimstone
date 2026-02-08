@@ -25,6 +25,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarRail,
+  useSidebar,
 } from "@/components/ui/sidebar"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useAuth } from "@/hooks/use-auth"
@@ -46,7 +47,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { user } = useAuth()
   const { data, isLoading } = useSpaces(user?.id)
   const spaces = data?.spaces ?? []
-  const { state } = Sidebar.useSidebar?.() ?? { state: "expanded" }
+  const { state } = useSidebar()
 
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -77,7 +78,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   onClick={openCreateSpaceModal}
                   className="bg-primary text-primary-foreground hover:bg-primary/90"
                   tooltip="Create new space"
-                  size={state === "collapsed" ? "icon" : "default"}
+                  size={state === "collapsed" ? "sm" : "default"}
                 >
                   <Plus className="!size-4" />
                   <span className={state === "collapsed" ? "sr-only" : ""}>New Space</span>
@@ -98,7 +99,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       asChild
                       isActive={isActive}
                       tooltip={item.title}
-                      size={state === "collapsed" ? "icon" : "default"}
+                      size={state === "collapsed" ? "sm" : "default"}
                     >
                       <Link href={item.url}>
                         <item.icon className="!size-4" />
@@ -118,13 +119,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <SidebarMenu>
               {isLoading ? (
                 <SidebarMenuItem>
-                  <SidebarMenuButton size={state === "collapsed" ? "icon" : "default"} disabled>
+                  <SidebarMenuButton size={state === "collapsed" ? "sm" : "default"} disabled>
                     <span className={state === "collapsed" ? "sr-only" : "text-xs text-muted-foreground"}>Loading spaces…</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ) : spaces.length === 0 ? (
                 <SidebarMenuItem>
-                  <SidebarMenuButton size={state === "collapsed" ? "icon" : "default"} disabled>
+                  <SidebarMenuButton size={state === "collapsed" ? "sm" : "default"} disabled>
                     <span className={state === "collapsed" ? "sr-only" : "text-xs text-muted-foreground"}>No spaces yet</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -138,7 +139,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     <Collapsible key={space.id} className="group/collapsible">
                       <SidebarMenuItem>
                         <CollapsibleTrigger asChild>
-                          <SidebarMenuButton tooltip={space.name} size={state === "collapsed" ? "icon" : "default"}>
+                          <SidebarMenuButton tooltip={space.name} size={state === "collapsed" ? "sm" : "default"}>
                             <Layers className="h-4 w-4" />
                             <span className={state === "collapsed" ? "sr-only" : "truncate"}>{space.name}</span>
                             <ChevronRight className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
@@ -191,7 +192,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size={state === "collapsed" ? "icon" : "default"} className="text-muted-foreground">
+            <SidebarMenuButton size={state === "collapsed" ? "sm" : "default"} className="text-muted-foreground">
               <span className={state === "collapsed" ? "sr-only" : "text-xs"}>v0.1.0</span>
             </SidebarMenuButton>
           </SidebarMenuItem>

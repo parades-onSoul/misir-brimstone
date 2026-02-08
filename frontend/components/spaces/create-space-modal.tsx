@@ -31,12 +31,9 @@ export function CreateSpaceModal() {
 
         createSpace(
             {
-                userId: user.id,
-                data: {
-                    user_id: user.id,
-                    name: name.trim(),
-                    description: description.trim() || undefined,
-                },
+                user_id: user.id,
+                name: name.trim(),
+                description: description.trim() || undefined,
             },
             {
                 onSuccess: () => {

@@ -76,7 +76,6 @@ export default function ArtifactDetailPage({ params }: { params: { id: string } 
         try {
             await updateMutation.mutateAsync({
                 artifactId: parseInt(artifact.id),
-                userId: user!.id,
                 data: {
                     title: editedTitle,
                     content: editedContent,
@@ -92,10 +91,7 @@ export default function ArtifactDetailPage({ params }: { params: { id: string } 
         if (!artifact || !confirm('Are you sure you want to delete this artifact?')) return;
 
         try {
-            await deleteMutation.mutateAsync({
-                artifactId: parseInt(artifact.id),
-                userId: user!.id,
-            });
+            await deleteMutation.mutateAsync(parseInt(artifact.id));
             router.push('/dashboard/artifacts');
         } catch (error) {
             console.error('Failed to delete artifact:', error);

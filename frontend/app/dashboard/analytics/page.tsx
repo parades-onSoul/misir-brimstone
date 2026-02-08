@@ -36,7 +36,7 @@ export default function AnalyticsPage() {
 
     // Generate mock analytics data based on spaces
     const totalArtifacts = spaces?.spaces.reduce((sum: number, s: SpaceResponse) => sum + s.artifact_count, 0) ?? 0;
-    const spacesCount = spaces?.length ?? 0;
+    const spacesCount = spaces?.count ?? 0;
 
     // Mock engagement distribution (Backend v1.0 levels)
     const engagementDistribution = {
@@ -302,7 +302,7 @@ export default function AnalyticsPage() {
                                     </CardDescription>
                                 </CardHeader>
                                 <CardContent>
-                                    {spaces && spaces.length > 0 ? (
+                                    {spaces && spaces.count > 0 ? (
                                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                                             {spaces.spaces.map((space: SpaceResponse, i: number) => (
                                                 <motion.div
