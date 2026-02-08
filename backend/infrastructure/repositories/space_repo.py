@@ -30,6 +30,7 @@ class SpaceRepository:
     - create(name, owner_id)
     - list(owner_id)
     - get_by_id(space_id)
+    - delete(space_id, owner_id)
     """
     
     def __init__(self, client: Client):
@@ -99,7 +100,7 @@ class SpaceRepository:
                 .from_('space')
                 .select('*')
                 .eq('user_id', user_id)
-                .is_('deleted_at', 'null')
+                # No soft-delete column in schema; return all user spaces
                 .order('created_at', desc=True)
                 .execute()
             )
@@ -137,7 +138,6 @@ class SpaceRepository:
                 .select('*')
                 .eq('id', space_id)
                 .eq('user_id', user_id)
-                .is_('deleted_at', 'null')
                 .execute()
             )
             
@@ -154,4 +154,25 @@ class SpaceRepository:
             
         except Exception as e:
             logger.error(f"Failed to get space: {e}")
+            raise
+
+    async def delete(self, space_id: int, user_id: str) -> bool:
+        """Delete a space for a user.
+
+        Returns True if a row was deleted, False otherwise.
+        """
+        try:
+            response = (
+                self._client.schema('misir')
+                .from_('space')
+                .delete()
+                .eq('id', space_id)
+                .eq('user_id', user_id)
+                .execute()
+            )
+
+            # Supabase returns deleted rows when `returning` default; treat presence as success
+            return bool(response.data)
+        except Exception as e:
+            logger.error(f"Failed to delete space: {e}")
             raise

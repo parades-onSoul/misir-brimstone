@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 380px;
+  min-height: 480px;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: #0f1115;
+  color: #e2e8f0;
+  overflow-x: hidden;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2d35;
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3b82f6;
+}
+
+/* Engagement badges */
+.badge-ambient {
+  @apply bg-blue-500/20 text-blue-400 border-blue-500/30;
+}
+.badge-engaged {
+  @apply bg-amber-500/20 text-amber-400 border-amber-500/30;
+}
+.badge-committed {
+  @apply bg-emerald-500/20 text-emerald-400 border-emerald-500/30;
+}

@@ -4,10 +4,13 @@ Artifact Handler — Orchestrates artifact updates and deletions.
 import logging
 from typing import Optional
 
+from result import Result, Ok, Err
 from domain.commands import UpdateArtifactCommand, DeleteArtifactCommand
 from infrastructure.repositories import ArtifactRepository
+from core.error_types import ErrorDetail
+from core.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ArtifactHandler:
@@ -19,20 +22,20 @@ class ArtifactHandler:
     def __init__(self, repo: ArtifactRepository):
         self._repo = repo
         
-    async def update(self, cmd: UpdateArtifactCommand) -> bool:
+    async def update(self, cmd: UpdateArtifactCommand) -> Result[bool, ErrorDetail]:
         """
         Handle artifact update.
-        python
+        
         Args:
             cmd: Update command
             
         Returns:
-            True if updated, False if not found
+            Result[bool, ErrorDetail] - True if updated, False if not found
         """
-        # 1. Update artifact fields
+        # Update artifact fields
         return await self._repo.update_artifact(cmd)
         
-    async def delete(self, cmd: DeleteArtifactCommand) -> bool:
+    async def delete(self, cmd: DeleteArtifactCommand) -> Result[bool, ErrorDetail]:
         """
         Handle artifact deletion.
         
@@ -40,7 +43,7 @@ class ArtifactHandler:
             cmd: Delete command
             
         Returns:
-            True if deleted, False if not found
+            Result[bool, ErrorDetail] - True if deleted, False if not found
         """
-        # 1. Soft delete artifact (signals effectively hidden from search)
+        # Soft delete artifact (signals effectively hidden from search)
         return await self._repo.delete_artifact(cmd.artifact_id, cmd.user_id)

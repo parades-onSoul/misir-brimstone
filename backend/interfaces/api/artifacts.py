@@ -6,11 +6,13 @@ Endpoints:
 - PATCH /artifacts/{id}
 """
 from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi_problem.error import Problem
 from pydantic import BaseModel
 from typing import Optional
 
 from supabase import Client
 from core.limiter import limiter
+from core.error_handlers import create_problem_response
 from domain.commands import UpdateArtifactCommand, DeleteArtifactCommand
 from application.handlers.artifact_handler import ArtifactHandler
 from infrastructure.repositories import ArtifactRepository
@@ -46,6 +48,11 @@ async def update_artifact(
     Update an artifact.
     
     Allowed fields: title, content, engagement_level, reading_depth.
+    
+    Raises:
+        Problem (400): If validation fails
+        Problem (404): If artifact not found
+        Problem (500): If update fails
     """
     cmd = UpdateArtifactCommand(
         artifact_id=artifact_id,
@@ -56,15 +63,23 @@ async def update_artifact(
         reading_depth=body.reading_depth
     )
     
-    try:
-        updated = await handler.update(cmd)
-        if not updated:
-            raise HTTPException(status_code=404, detail="Artifact not found")
-        return {"message": "Artifact updated"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    result = await handler.update(cmd)
+    
+    # Convert Result to HTTP response
+    if result.is_err():
+        error = result.unwrap_err()
+        raise create_problem_response(error, str(request.url.path))
+    
+    updated = result.unwrap()
+    if not updated:
+        raise Problem(
+            status=404,
+            title="Not Found",
+            detail="Artifact not found",
+            type_="not-found"
+        )
+    
+    return {"message": "Artifact updated"}
 
 
 @router.delete("/{artifact_id}", response_model=dict)
@@ -77,16 +92,30 @@ async def delete_artifact(
 ):
     """
     Soft-delete an artifact.
+    
+    Raises:
+        Problem (404): If artifact not found
+        Problem (500): If deletion fails
     """
     cmd = DeleteArtifactCommand(
         artifact_id=artifact_id,
         user_id=user_id
     )
     
-    try:
-        deleted = await handler.delete(cmd)
-        if not deleted:
-            raise HTTPException(status_code=404, detail="Artifact not found")
-        return {"message": "Artifact deleted"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    result = await handler.delete(cmd)
+    
+    # Convert Result to HTTP response
+    if result.is_err():
+        error = result.unwrap_err()
+        raise create_problem_response(error, str(request.url.path))
+    
+    deleted = result.unwrap()
+    if not deleted:
+        raise Problem(
+            status=404,
+            title="Not Found",
+            detail="Artifact not found",
+            type_="not-found"
+        )
+    
+    return {"message": "Artifact deleted"}

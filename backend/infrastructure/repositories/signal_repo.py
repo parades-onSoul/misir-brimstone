@@ -6,14 +6,17 @@ This repository provides:
 - Vector similarity search (ISS)
 - Signal queries by space/subspace
 - Analytics queries
+Returns Result[T, ErrorDetail] for type-safe error handling.
 """
 from dataclasses import dataclass
 from typing import Optional
-import logging
 
+from result import Result, Ok, Err
 from supabase import Client
+from core.error_types import ErrorDetail, repository_error
+from core.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -60,7 +63,7 @@ class SignalRepository:
         subspace_id: Optional[int] = None,
         limit: int = 20,
         threshold: float = 0.7
-    ) -> list[SignalSearchResult]:
+    ) -> Result[list[SignalSearchResult], ErrorDetail]:
         """
         Search signals by vector similarity (ISS).
         
@@ -75,7 +78,7 @@ class SignalRepository:
             threshold: Min similarity (0-1)
         
         Returns:
-            List of SignalSearchResult ordered by similarity
+            Result[list[SignalSearchResult], ErrorDetail]: Search results or error
         """
         try:
             # Try RPC first (uses HNSW index)
@@ -109,13 +112,15 @@ class SignalRepository:
                     url=row.get('url', '')
                 ))
             
-            return results
+            return Ok(results)
             
         except Exception as e:
-            logger.warning(f"RPC search failed: {e}, using fallback")
-            return await self._search_fallback(
-                query_vector, user_id, space_id, subspace_id, limit
-            )
+            logger.error(f"Vector search failed: {e}", exc_info=e)
+            return Err(repository_error(
+                operation="search_signals",
+                details=f"Failed to search signals: {str(e)}"
+            ))
+
     
     async def _search_fallback(
         self,

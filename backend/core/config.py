@@ -20,10 +20,6 @@ class Settings(BaseSettings):
     SUPABASE_KEY: str  # anon key for client
     SUPABASE_SERVICE_KEY: str = ""  # service role for admin ops
     
-    # Authentication
-    MOCK_AUTH: bool = True  # Set to False in production to require real JWT tokens
-    MOCK_USER_ID: str = "test-user-123"  # Only used when MOCK_AUTH=True
-    
     # Rate Limiting
     RATE_LIMIT_STORAGE: str = "memory"  # "memory" or "redis"
     REDIS_URL: str = "redis://localhost:6379"  # Only used when RATE_LIMIT_STORAGE=redis

@@ -3,17 +3,24 @@ Subspace Repository — Read operations for subspaces.
 
 Subspaces are semantic clusters within spaces.
 For v1, we only need read operations (subspaces created via signals).
+Returns Result[T, ErrorDetail] for type-safe error handling.
 """
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
-import logging
 
+from result import Result, Ok, Err
 from core.config import get_settings
 from supabase import Client
 from domain.entities.analytics import SubspaceVelocity, SubspaceDrift
+from core.error_types import (
+    ErrorDetail,
+    repository_error,
+    not_found_error
+)
+from core.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -47,7 +54,7 @@ class SubspaceRepository:
         self, 
         space_id: int, 
         user_id: str
-    ) -> list[SubspaceResult]:
+    ) -> Result[list[SubspaceResult], ErrorDetail]:
         """
         Get all subspaces in a space.
         
@@ -56,7 +63,7 @@ class SubspaceRepository:
             user_id: Owner user ID (for RLS)
         
         Returns:
-            List of SubspaceResult
+            Result[list[SubspaceResult], ErrorDetail]: List of subspaces or error
         """
         try:
             response = (
@@ -65,12 +72,11 @@ class SubspaceRepository:
                 .select('*')
                 .eq('space_id', space_id)
                 .eq('user_id', user_id)
-                .is_('deleted_at', 'null')
                 .order('artifact_count', desc=True)
                 .execute()
             )
             
-            return [
+            results = [
                 SubspaceResult(
                     id=row['id'],
                     space_id=row['space_id'],
@@ -84,16 +90,22 @@ class SubspaceRepository:
                 )
                 for row in (response.data or [])
             ]
+            return Ok(results)
             
         except Exception as e:
-            logger.error(f"Failed to get subspaces: {e}")
-            raise
+            logger.error(f"Failed to get subspaces: {e}", exc_info=e)
+            return Err(repository_error(
+                f"Failed to get subspaces: {str(e)}",
+                operation="get_subspaces",
+                space_id=space_id,
+                user_id=user_id
+            ))
     
     async def get_by_id(
         self, 
         subspace_id: int, 
         user_id: str
-    ) -> Optional[SubspaceResult]:
+    ) -> Result[Optional[SubspaceResult], ErrorDetail]:
         """
         Get subspace by ID.
         
@@ -102,7 +114,7 @@ class SubspaceRepository:
             user_id: Owner user ID (for RLS)
         
         Returns:
-            SubspaceResult or None
+            Result[Optional[SubspaceResult], ErrorDetail]: Subspace or None if not found, or error
         """
         try:
             response = (
@@ -111,13 +123,12 @@ class SubspaceRepository:
                 .select('*')
                 .eq('id', subspace_id)
                 .eq('user_id', user_id)
-                .is_('deleted_at', 'null')
                 .execute()
             )
             
             if response.data and len(response.data) > 0:
                 row = response.data[0]
-                return SubspaceResult(
+                result = SubspaceResult(
                     id=row['id'],
                     space_id=row['space_id'],
                     name=row['name'],
@@ -128,17 +139,23 @@ class SubspaceRepository:
                     learning_rate=row.get('learning_rate', 0.1),
                     centroid_embedding=row.get('centroid_embedding')
                 )
-            return None
+                return Ok(result)
+            return Ok(None)
             
         except Exception as e:
-            logger.error(f"Failed to get subspace: {e}")
-            raise
+            logger.error(f"Failed to get subspace: {e}", exc_info=e)
+            return Err(repository_error(
+                f"Failed to get subspace: {str(e)}",
+                operation="get_subspace",
+                subspace_id=subspace_id,
+                user_id=user_id
+            ))
     
     async def get_centroid(
         self, 
         subspace_id: int, 
         user_id: str
-    ) -> Optional[list[float]]:
+    ) -> Result[Optional[list[float]], ErrorDetail]:
         """
         Get centroid embedding for a subspace.
         
@@ -147,7 +164,7 @@ class SubspaceRepository:
             user_id: Owner user ID (for RLS)
         
         Returns:
-            Centroid vector or None
+            Result[Optional[list[float]], ErrorDetail]: Centroid vector, None, or error
         """
         try:
             response = (
@@ -160,23 +177,27 @@ class SubspaceRepository:
             )
             
             if response.data and len(response.data) > 0:
-                return response.data[0].get('centroid_embedding')
-            return None
+                return Ok(response.data[0].get('centroid_embedding'))
+            return Ok(None)
             
         except Exception as e:
-            logger.error(f"Failed to get centroid: {e}")
-            raise
+            logger.error(f"Failed to get centroid: {e}", exc_info=e)
+            return Err(repository_error(
+                f"Failed to get centroid: {str(e)}",
+                operation="get_centroid",
+                subspace_id=subspace_id
+            ))
     
     async def get_all_centroids(
         self, 
         space_id: int, 
         user_id: str
-    ) -> list[tuple[int, list[float]]]:
+    ) -> Result[list[tuple[int, list[float]]], ErrorDetail]:
         """
         Get all centroids in a space (for assignment margin).
         
         Returns:
-            List of (subspace_id, centroid) tuples
+            Result[list[tuple[int, list[float]]], ErrorDetail]: List of (subspace_id, centroid) tuples or error
         """
         try:
             response = (
@@ -189,14 +210,19 @@ class SubspaceRepository:
                 .execute()
             )
             
-            return [
+            results = [
                 (row['id'], row['centroid_embedding'])
                 for row in (response.data or [])
             ]
+            return Ok(results)
             
         except Exception as e:
-            logger.error(f"Failed to get centroids: {e}")
-            raise
+            logger.error(f"Failed to get centroids: {e}", exc_info=e)
+            return Err(repository_error(
+                f"Failed to get centroids: {str(e)}",
+                operation="get_all_centroids",
+                space_id=space_id
+            ))
     
     async def create(
         self,

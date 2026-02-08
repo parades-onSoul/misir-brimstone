@@ -4,6 +4,7 @@ Space Handler — Use cases for space operations.
 Handles:
 - Create space
 - List spaces
+- Delete space
 """
 from dataclasses import dataclass
 from typing import Optional
@@ -95,3 +96,8 @@ class SpaceHandler:
             SpaceResult or None
         """
         return await self._repository.get_by_id(space_id, user_id)
+
+    async def delete(self, space_id: int, user_id: str) -> bool:
+        """Delete a space scoped to the user."""
+        logger.info(f"Deleting space {space_id} for user {user_id[:8]}...")
+        return await self._repository.delete(space_id, user_id)

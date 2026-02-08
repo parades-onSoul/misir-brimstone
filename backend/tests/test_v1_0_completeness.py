@@ -74,9 +74,13 @@ class TestArtifactRepository:
         
         result = await repo.ingest_with_signal(cmd)
         
-        assert result.artifact_id == 1
-        assert result.signal_id == 100
-        assert result.is_new is True
+        # Unwrap Result
+        assert result.is_ok()
+        capture_result = result.unwrap()
+        
+        assert capture_result.artifact_id == 1
+        assert capture_result.signal_id == 100
+        assert capture_result.is_new is True
         
         # Verify RPC call
         mock_client.rpc.assert_called_once()
@@ -85,7 +89,7 @@ class TestArtifactRepository:
 
     @pytest.mark.asyncio
     async def test_create_artifact_rpc_error(self, mock_client):
-        """Should raise exception on RPC failure."""
+        """Should return Err on RPC failure."""
         from infrastructure.repositories.artifact_repo import ArtifactRepository
         from domain.commands import CaptureArtifactCommand
         
@@ -107,5 +111,9 @@ class TestArtifactRepository:
             content_source="web"
         )
         
-        with pytest.raises(Exception, match="RPC Failed"):
-            await repo.ingest_with_signal(cmd)
+        result = await repo.ingest_with_signal(cmd)
+        
+        # Should return Err, not raise exception
+        assert result.is_err()
+        error = result.unwrap_err()
+        assert "RPC Failed" in error.message or "RPC Failed" in error.details

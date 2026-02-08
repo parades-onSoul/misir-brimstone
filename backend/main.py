@@ -14,6 +14,7 @@ from core.config import settings
 from core.logging_config import configure_logging, get_logger
 from interfaces.api import capture_router
 from interfaces.api.spaces import router as spaces_router
+from interfaces.api.subspaces import router as subspaces_router
 from interfaces.api.search import router as search_router
 
 # Initialize structured logging
@@ -50,20 +51,18 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
-# Global exception handler for debugging
-from fastapi import Request
-from fastapi.responses import JSONResponse
+# Error Handling - RFC 9457 (Problem Details for HTTP APIs)
+from pydantic import ValidationError
+from core.error_handlers import (
+    pydantic_validation_error_handler,
+    value_error_handler,
+    generic_exception_handler
+)
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    """Catch all unhandled exceptions and log them."""
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.exception(f"Unhandled exception on {request.method} {request.url.path}")
-    return JSONResponse(
-        status_code=500,
-        content={"detail": str(exc), "type": type(exc).__name__}
-    )
+# Register error handlers in order of specificity
+app.add_exception_handler(ValidationError, pydantic_validation_error_handler)
+app.add_exception_handler(ValueError, value_error_handler)
+app.add_exception_handler(Exception, generic_exception_handler)
 
 
 @app.get("/")
@@ -110,6 +109,12 @@ app.include_router(
     spaces_router,
     prefix=f"{settings.API_V1_STR}",
     tags=["Spaces"]
+)
+
+app.include_router(
+    subspaces_router,
+    prefix=f"{settings.API_V1_STR}",
+    tags=["Subspaces"]
 )
 
 app.include_router(

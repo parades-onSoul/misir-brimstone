@@ -4,7 +4,8 @@ Batch API — Bulk operations.
 Endpoints:
 - POST /artifacts/batch — Batch capture artifacts
 """
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, Depends, Request
+from fastapi_problem.error import Problem
 from pydantic import BaseModel, Field
 from typing import List
 
@@ -40,6 +41,10 @@ async def batch_capture(
     
     Max 100 artifacts per request.
     Wraps individual capture logic.
+    
+    Raises:
+        Problem (400): If validation fails
+        Problem (500): If batch operation fails
     """
     successful = []
     failed = []
@@ -58,8 +63,8 @@ async def batch_capture(
                 # Generate embedding (TODO: Batch embedding generation for performance)
                 from infrastructure.services.embedding_service import get_embedding_service
                 svc = get_embedding_service()
-                result = svc.embed_text(text_to_embed)
-                embedding = result.vector
+                embed_result = svc.embed_text(text_to_embed)
+                embedding = embed_result.vector
 
             # 2. Convert to command
             cmd = CaptureArtifactCommand(
@@ -83,14 +88,26 @@ async def batch_capture(
                 captured_at=item.captured_at
             )
             
-            # 3. Handle
+            # 3. Handle command
             result = await handler.handle(cmd)
             
+            # Unwrap Result
+            if result.is_err():
+                error = result.unwrap_err()
+                failed.append({
+                    "index": i,
+                    "url": item.url,
+                    "error": f"{error.error_code}: {error.message}"
+                })
+                continue
+            
+            capture_result = result.unwrap()
+            
             successful.append(CaptureResponse(
-                artifact_id=result.artifact_id,
-                signal_id=result.signal_id,
-                is_new=result.is_new,
-                message=result.message
+                artifact_id=capture_result.artifact_id,
+                signal_id=capture_result.signal_id,
+                is_new=capture_result.is_new,
+                message=capture_result.message
             ))
             
         except Exception as e:

@@ -4,13 +4,15 @@ Search API — Semantic search endpoint.
 Endpoint:
 - GET /search — Search artifacts by semantic similarity
 """
-from fastapi import APIRouter, HTTPException, Depends, Header, Query
+from fastapi import APIRouter, HTTPException, Depends, Header, Query, Request
+from fastapi_problem.error import Problem
 from pydantic import BaseModel
 from typing import Optional
 import logging
 
 from supabase import create_client, Client
 from core.config import get_settings
+from core.error_handlers import create_problem_response
 from application.handlers.search_handler import SearchHandler, SearchCommand
 
 logger = logging.getLogger(__name__)
@@ -50,17 +52,8 @@ def get_current_user(
     client: Client = Depends(get_supabase_client)
 ) -> str:
     """
-    Extract user_id from JWT token.
-    
-    When MOCK_AUTH=True (development), returns a mock user ID.
-    When MOCK_AUTH=False (production), validates JWT with Supabase.
+    Extract user_id from JWT token and validate with Supabase.
     """
-    settings = get_settings()
-    
-    if settings.MOCK_AUTH:
-        return settings.MOCK_USER_ID
-    
-    # Production authentication
     try:
         if not authorization:
             raise HTTPException(status_code=401, detail="Authorization header required")
@@ -104,7 +97,6 @@ async def search(
     Uses ISS (Implicit Semantic Search) with HNSW indexing.
     
     Args:
-        user_id: User ID
         q: Search query text
         space_id: Optional space filter
         subspace_id: Optional subspace filter
@@ -113,41 +105,45 @@ async def search(
     
     Returns:
         SearchResponseModel with ranked results
+        
+    Raises:
+        Problem (400): If validation fails
+        Problem (500): If search fails
     """
-    try:
-        handler = SearchHandler(client)
-        cmd = SearchCommand(
-            user_id=current_user_id,
-            query=q,
-            space_id=space_id,
-            subspace_id=subspace_id,
-            limit=limit,
-            threshold=threshold
-        )
-        
-        response = await handler.search(cmd)
-        
-        return SearchResponseModel(
-            results=[
-                SearchResultItem(
-                    artifact_id=r.artifact_id,
-                    signal_id=r.signal_id,
-                    similarity=r.similarity,
-                    title=r.title,
-                    url=r.url,
-                    content_preview=r.content_preview,
-                    space_id=r.space_id,
-                    subspace_id=r.subspace_id
-                )
-                for r in response.results
-            ],
-            query=response.query,
-            count=response.count,
-            dimension_used=response.dimension_used
-        )
-        
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Search failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    handler = SearchHandler(client)
+    cmd = SearchCommand(
+        user_id=current_user_id,
+        query=q,
+        space_id=space_id,
+        subspace_id=subspace_id,
+        limit=limit,
+        threshold=threshold
+    )
+    
+    result = await handler.search(cmd)
+    
+    # Convert Result to HTTP response
+    if result.is_err():
+        error = result.unwrap_err()
+        raise create_problem_response(error, str(request.url.path))
+    
+    response = result.unwrap()
+    
+    return SearchResponseModel(
+        results=[
+            SearchResultItem(
+                artifact_id=r.artifact_id,
+                signal_id=r.signal_id,
+                similarity=r.similarity,
+                title=r.title,
+                url=r.url,
+                content_preview=r.content_preview,
+                space_id=r.space_id,
+                subspace_id=r.subspace_id
+            )
+            for r in response.results
+        ],
+        query=response.query,
+        count=response.count,
+        dimension_used=response.dimension_used
+    )

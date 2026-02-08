@@ -1,6 +1,7 @@
 
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
+from result import Ok
 from interfaces.api.capture import CaptureRequest
 from application.handlers import CaptureHandler
 from infrastructure.repositories import CaptureResult
@@ -24,12 +25,12 @@ def mock_embedding_service():
 def mock_handler():
     handler = Mock(spec=CaptureHandler)
     handler.handle = AsyncMock()
-    handler.handle.return_value = CaptureResult(
+    handler.handle.return_value = Ok(CaptureResult(
         artifact_id=1,
         signal_id=2,
         is_new=True,
         message="Captured"
-    )
+    ))
     return handler
 
 @pytest.fixture
@@ -84,7 +85,8 @@ async def test_capture_with_generated_embedding(mock_handler, mock_embedding_ser
 async def test_capture_missing_embedding_and_content(mock_handler, mock_limiter, mock_current_user):
     # Import the function after mocking the limiter
     from interfaces.api.capture import capture_artifact
-    from fastapi import Request, HTTPException
+    from fastapi import Request
+    from rfc9457 import Problem
     
     # Mock request object
     request = Mock(spec=Request)
@@ -102,11 +104,11 @@ async def test_capture_missing_embedding_and_content(mock_handler, mock_limiter,
         word_count=500
     )
     
-    with pytest.raises(HTTPException) as excinfo:
+    with pytest.raises(Problem) as excinfo:
         await capture_artifact(request, body, current_user_id="user1", handler=mock_handler)
     
-    assert excinfo.value.status_code == 400
-    assert "Either 'embedding' or 'content'/'title' must be provided" in str(excinfo.value.detail)
+    assert excinfo.value.status == 400
+    assert "Either 'embedding' or 'content'/'title' must be provided" in excinfo.value.detail
 
 @pytest.mark.asyncio
 async def test_capture_with_provided_embedding(mock_handler, mock_embedding_service, mock_limiter, mock_current_user):
