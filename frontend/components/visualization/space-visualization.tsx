@@ -10,15 +10,17 @@ import type { Artifact, EngagementLevel } from '@/types/api';
 // Engagement Colors - Matching brand #1e90ff
 // ============================================================================
 const ENGAGEMENT_COLORS: Record<EngagementLevel, number> = {
-    ambient: 0x3a3a4f,     // Muted gray-purple
+    latent: 0x3a3a4f,      // Muted gray-purple
+    discovered: 0x90ee90,  // Light green
     engaged: 0x1e90ff,     // Brand blue
-    committed: 0xffa500,   // Warm amber
+    saturated: 0xffa500,   // Warm amber
 };
 
 const ENGAGEMENT_NAMES: Record<EngagementLevel, string> = {
-    ambient: 'Ambient',
+    latent: 'Latent',
+    discovered: 'Discovered',
     engaged: 'Engaged',
-    committed: 'Committed',
+    saturated: 'Saturated',
 };
 
 // ============================================================================
@@ -158,12 +160,13 @@ export function SpaceVisualization({
 
             // Group artifacts by engagement level
             const artifactsByLevel: Record<EngagementLevel, Artifact[]> = {
-                ambient: [],
+                latent: [],
+                discovered: [],
                 engaged: [],
-                committed: [],
+                saturated: [],
             };
             artifacts.forEach(a => {
-                const level = a.engagement_level || 'ambient';
+                const level = a.engagement_level || 'latent';
                 artifactsByLevel[level].push(a);
             });
 
@@ -193,7 +196,7 @@ export function SpaceVisualization({
 
             // Create blobs for each engagement level
             const activeBlobs: { graphics: Graphics; level: EngagementLevel }[] = [];
-            const levels: EngagementLevel[] = ['ambient', 'engaged', 'committed'];
+            const levels: EngagementLevel[] = ['latent', 'discovered', 'engaged', 'saturated'];
 
             levels.forEach(level => {
                 if (artifactsByLevel[level].length > 0) {

@@ -57,7 +57,7 @@ export default function ReportPage() {
         return <ReportError error={error?.message || 'Failed to load report'} />;
     }
 
-    if (!spaces || spaces.length === 0) {
+    if (!spaces || spaces.count === 0) {
         return (
             <div className="max-w-3xl mx-auto px-4 sm:px-8 py-8 sm:py-12">
                 <PeriodSelector value={period} onChange={setPeriod} />
@@ -68,7 +68,7 @@ export default function ReportPage() {
 
     // Calculate report data
     const totalArtifacts = spaces.spaces.reduce((sum: number, s: SpaceResponse) => sum + s.artifact_count, 0);
-    const totalSpaces = spaces.length;
+    const totalSpaces = spaces.count;
 
     // Mock engagement distribution (Backend v1.0: latent, discovered, engaged, saturated)
     const engagementDistribution = {

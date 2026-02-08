@@ -58,9 +58,7 @@ export default function SpaceDetailPage() {
     const handleDeleteSpace = () => {
         if (!user) return;
         if (confirm('Are you sure you want to delete this space? This action cannot be undone.')) {
-            deleteSpace(
-                { spaceId, userId: user.id },
-                {
+            deleteSpace(spaceId, {
                     onSuccess: () => router.push('/dashboard'),
                     onError: (error) => {
                         console.error('Failed to delete space:', error);

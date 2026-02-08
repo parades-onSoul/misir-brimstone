@@ -40,6 +40,9 @@ export interface SpaceResponse {
     updated_at?: string;
 }
 
+// Alias for components
+export type Space = SpaceResponse;
+
 export interface SpaceListResponse {
     spaces: SpaceResponse[];
     count: number;
@@ -205,6 +208,25 @@ export interface PaginatedResponse<T> {
     page?: number;
     page_size?: number;
     total_pages?: number;
+}
+
+// ============ Insights (Analytics) ============
+
+export type InsightSeverity = 'low' | 'medium' | 'high' | 'critical';
+
+export interface Insight {
+    id: number;
+    user_id: string;
+    space_id?: number;
+    headline: string;
+    description?: string;
+    severity: InsightSeverity;
+    category?: string;
+    recommended_action?: string;
+    created_at: string;
+    updated_at?: string;
+    dismissed_at?: string | null;
+    acted_at?: string | null;
 }
 
 // ============ Profile ============

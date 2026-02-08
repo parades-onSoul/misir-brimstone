@@ -89,7 +89,7 @@ export function ArtifactDetailModal({
                     </motion.div>
 
                     {/* Content Preview */}
-                    {artifact.extracted_text && (
+                    {artifact.content && (
                         <motion.div
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
@@ -100,7 +100,7 @@ export function ArtifactDetailModal({
                                 Content Preview
                             </h4>
                             <p className="line-clamp-6 text-sm leading-relaxed">
-                                {artifact.extracted_text}
+                                {artifact.content}
                             </p>
                         </motion.div>
                     )}

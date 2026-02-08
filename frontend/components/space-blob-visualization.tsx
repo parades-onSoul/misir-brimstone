@@ -281,7 +281,7 @@ export function SpaceBlobVisualization({
       world.addChild(blobContainer);
 
       // Create blobs for each state using mass vector for glow sizing
-      const massVector: StateVector = effectiveMassVector;
+      const massVector = effectiveMassVector as StateVector;
       const totalMass = massVector.reduce((a, b) => a + b, 0) || TOTAL_MASS;
       const blobPositions: Record<StateIndex, { x: number; y: number; radius: number }> = {
         3: { x: centerX, y: centerY, radius: blobRadii[3] }, // Saturated - center

@@ -30,7 +30,7 @@ export function NavSecondary({
             <SidebarMenuItem key={item.title}>
               <SidebarMenuButton
                 asChild
-                size={state === "collapsed" ? "icon" : "sm"}
+                size={state === "collapsed" ? "sm" : "sm"}
                 tooltip={item.title}
               >
                 <a href={item.url} aria-label={item.title}>

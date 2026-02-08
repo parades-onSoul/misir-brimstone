@@ -45,7 +45,7 @@ export function NavMain({
               <SidebarMenuButton
                 asChild
                 tooltip={item.title}
-                size={state === "collapsed" ? "icon" : "default"}
+                size={state === "collapsed" ? "sm" : "default"}
               >
                 <a href={item.url} aria-label={item.title}>
                   <item.icon />

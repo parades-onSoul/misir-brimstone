@@ -43,16 +43,15 @@ export default function ArtifactsPage() {
             space_id: selectedSpaceId ? parseInt(selectedSpaceId) : undefined,
             limit,
             threshold: 0.3,
-        },
-        !!query
+        }
     );
 
     const handleSearch = () => {
         setQuery(searchInput);
         setFilters({
-            space_id: selectedSpaceId ? parseInt(selectedSpaceId) : undefined,
-            limit,
-            threshold: filters.threshold || 0.3,
+            spaceId: selectedSpaceId,
+            sourceType: undefined,
+            engagementLevel: undefined,
         });
     };
 
@@ -188,11 +187,11 @@ export default function ArtifactsPage() {
                 </motion.div>
             )}
 
-            {results && results.length > 0 && (
+            {results && results.results.length > 0 && (
                 <div className="space-y-4">
                     <div className="flex items-center justify-between">
                         <p className="text-sm text-muted-foreground">
-                            Found {results.length} artifact{results.length !== 1 ? 's' : ''}
+                            Found {results.count} artifact{results.count !== 1 ? 's' : ''}
                         </p>
                     </div>
 

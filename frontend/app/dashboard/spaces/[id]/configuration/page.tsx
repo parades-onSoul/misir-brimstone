@@ -56,8 +56,7 @@ export default function SpaceConfigurationPage() {
 
     const handleDelete = () => {
         if (!user) return;
-        deleteSpace(
-            { spaceId, userId: user.id },
+        deleteSpace(spaceId,
             {
                 onSuccess: () => router.push('/dashboard'),
                 onError: () => setShowDeleteDialog(false),
