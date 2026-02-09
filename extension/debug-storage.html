@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Debug Storage</title>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #e0e0e0;
+    }
+    pre {
+      background: #2a2a2a;
+      padding: 15px;
+      border-radius: 8px;
+      overflow: auto;
+    }
+    button {
+      background: #3b82f6;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-right: 10px;
+    }
+    button:hover {
+      background: #2563eb;
+    }
+    button.danger {
+      background: #dc2626;
+    }
+    button.danger:hover {
+      background: #b91c1c;
+    }
+  </style>
+</head>
+<body>
+  <h1>Misir Extension Storage Debugger</h1>
+  <div>
+    <button onclick="loadStorage()">Load Storage</button>
+    <button onclick="clearAuth()" class="danger">Clear Auth</button>
+    <button onclick="clearAll()" class="danger">Clear All Storage</button>
+  </div>
+  <pre id="output">Click "Load Storage" to see contents...</pre>
+
+  <script>
+    async function loadStorage() {
+      const all = await chrome.storage.local.get(null);
+      document.getElementById('output').textContent = JSON.stringify(all, null, 2);
+    }
+
+    async function clearAuth() {
+      await chrome.storage.local.remove(['misir_session', 'userId']);
+      document.getElementById('output').textContent = 'Auth cleared. Click Load Storage to verify.';
+    }
+
+    async function clearAll() {
+      await chrome.storage.local.clear();
+      document.getElementById('output').textContent = 'All storage cleared. Extension will reinitialize on next load.';
+    }
+
+    // Auto-load on page load
+    loadStorage();
+  </script>
+</body>
+</html>
