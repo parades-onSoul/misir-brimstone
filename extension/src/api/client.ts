@@ -117,11 +117,13 @@ async function apiFetch<T>(
 // ── Public API ───────────────────────────────────────
 
 export async function fetchSpaces(): Promise<Space[]> {
-  // Dynamically import getAuthUserId to avoid loading supabase in service worker
-  const { getAuthUserId } = await import('@/api/supabase');
+  const config = await getConfig();
+  // Dynamically import getAuthState to avoid loading supabase in service worker
+  const { getAuthState } = await import('@/api/supabase');
 
   // Use Supabase user ID if authenticated, fall back to config
-  const userId = await getAuthUserId();
+  const authState = await getAuthState();
+  const userId = authState?.userId || config.userId;
   if (!userId) throw new Error('No user ID configured');
 
   const resp = await apiFetch<{ spaces: Space[]; count: number }>(
@@ -192,4 +194,3 @@ export async function healthCheck(): Promise<boolean> {
 }
 
 export { getConfig, setConfig };
-

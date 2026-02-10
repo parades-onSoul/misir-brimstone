@@ -303,23 +303,34 @@ chrome.runtime.onInstalled.addListener((details) => {
       recentCaptures: [],
     });
   }
+  // Attempt to process any queued captures after install/update
+  processQueueIfOnline('onInstalled').catch(() => {});
 });
 
-// ── Network Event Listener (Offline Queue Processing) ─
+// ── Offline Queue Processing (MV3-safe) ─────────────
 
-// Listen for network status changes and process queue when online
-window.addEventListener('online', async () => {
-  console.log('[Misir] Network status: online');
+function isOnline(): boolean {
+  if (typeof navigator === 'undefined') return true;
+  return navigator.onLine !== false;
+}
+
+async function processQueueIfOnline(trigger: string): Promise<void> {
+  if (!isOnline()) {
+    console.log(`[Misir] Queue skipped (${trigger}): offline`);
+    return;
+  }
   try {
     const result = await processQueue(captureArtifact);
-    console.log('[Misir] Queue processed on network restore:', result);
+    if (result.processed > 0) {
+      console.log('[Misir] Queue processed:', { trigger, ...result });
+    }
   } catch (err) {
     console.error('[Misir] Failed to process queue:', err);
   }
-});
+}
 
-window.addEventListener('offline', () => {
-  console.log('[Misir] Network status: offline');
+chrome.runtime.onStartup.addListener(() => {
+  processQueueIfOnline('onStartup').catch(() => {});
 });
 
 // ── Pulse alarm (keep service worker alive) ──────────
@@ -335,6 +346,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         console.warn('[Misir] Pulse refresh failed:', err);
       });
     });
+    processQueueIfOnline('alarm').catch(() => {});
   }
 });
 

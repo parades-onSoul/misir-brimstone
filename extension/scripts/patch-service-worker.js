@@ -75,17 +75,17 @@ var crypto = globalThis.crypto;
 `;
 
 try {
+  const assetsPath = path.join(distPath, 'assets');
+  const files = fs.existsSync(assetsPath) ? fs.readdirSync(assetsPath) : [];
+  const workerBundleFile = files.find(f => f.startsWith('worker') && f.endsWith('.js') && !f.includes('globals'));
+
+  if (!workerBundleFile) {
+    console.error('❌ No worker bundle found to reference');
+    process.exit(1);
+  }
+
   if (!fs.existsSync(loaderPath)) {
     // Loader doesn't exist yet, create it
-    const assetsPath = path.join(distPath, 'assets');
-    const files = fs.readdirSync(assetsPath);
-    const workerBundleFile = files.find(f => f.startsWith('worker') && f.endsWith('.js') && !f.includes('globals'));
-    
-    if (!workerBundleFile) {
-      console.error('❌ No worker bundle found to reference');
-      process.exit(1);
-    }
-
     const loaderTemplate = `// Service Worker Guard - MUST run before any imports
 // Establish globals immediately with comprehensive stubs
 
@@ -148,7 +148,7 @@ var document = globalThis.document;
 var crypto = globalThis.crypto;
 
 // Now import the worker bundle (globals are established)
-import './assets/\${workerBundleFile}';
+import './assets/${workerBundleFile}';
 `;
     
     fs.writeFileSync(loaderPath, loaderTemplate, 'utf8');
@@ -162,17 +162,22 @@ import './assets/\${workerBundleFile}';
 
   fs.writeFileSync(loaderPath, loaderContent, 'utf8');
 
+  // Ensure loader imports the current worker bundle (hash changes per build)
+  const importLine = `import './assets/${workerBundleFile}';`;
+  let updatedLoader = fs.readFileSync(loaderPath, 'utf8');
+  const replaced = updatedLoader.replace(
+    /import\s+['"]\.\/assets\/[^'"]+['"]\s*;?/g,
+    importLine
+  );
+  if (replaced !== updatedLoader) {
+    updatedLoader = replaced;
+  } else if (!updatedLoader.includes(importLine)) {
+    updatedLoader = `${updatedLoader.trimEnd()}\n${importLine}\n`;
+  }
+  fs.writeFileSync(loaderPath, updatedLoader, 'utf8');
+
   // CRITICAL FIX: Replace bare window/document/crypto with globalThis versions in the bundle
   // This ensures strict-mode code can access them
-  const assetsPath = path.join(distPath, 'assets');
-  const files = fs.readdirSync(assetsPath);
-  const workerBundleFile = files.find(f => f.startsWith('worker') && f.endsWith('.js') && !f.includes('globals'));
-  
-  if (!workerBundleFile) {
-    console.error('❌ No worker bundle found in', assetsPath);
-    process.exit(1);
-  }
-
   const workerBundlePath = path.join(assetsPath, workerBundleFile);
   let bundleContent = fs.readFileSync(workerBundlePath, 'utf8');
   
@@ -244,6 +249,19 @@ import './assets/\${workerBundleFile}';
     }
     copyDir(iconsSource, iconsDest);
     console.log('✅ Icons copied');
+  }
+
+  // Copy debug storage page (MV3-safe external script)
+  const debugHtmlSource = path.join(__dirname, '../debug-storage.html');
+  const debugJsSource = path.join(__dirname, '../debug-storage.js');
+  if (fs.existsSync(debugHtmlSource)) {
+    fs.copyFileSync(debugHtmlSource, path.join(distPath, 'debug-storage.html'));
+  }
+  if (fs.existsSync(debugJsSource)) {
+    fs.copyFileSync(debugJsSource, path.join(distPath, 'debug-storage.js'));
+  }
+  if (fs.existsSync(debugHtmlSource) || fs.existsSync(debugJsSource)) {
+    console.log('✅ Debug storage page copied');
   }
 
 } catch (err) {
