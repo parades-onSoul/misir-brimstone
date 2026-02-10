@@ -23,10 +23,25 @@ export type SignalType = 'semantic' | 'temporal' | 'behavioral';
 
 // ============ Spaces (matching backend/interfaces/api/spaces.py) ============
 
-export interface CreateSpaceRequest {
-    user_id: string;
+export interface CreateMarkerInput {
+    text: string;
+}
+
+export interface CreateSubspaceInput {
     name: string;
     description?: string;
+    markers?: string[];
+    depth?: string;
+    prerequisites?: string[];
+    suggested_study_order?: number;
+}
+
+export interface CreateSpaceRequest {
+    user_id?: string;
+    name: string;
+    description?: string;
+    intention?: string;
+    subspaces?: CreateSubspaceInput[];
 }
 
 export interface SpaceResponse {
@@ -153,6 +168,7 @@ export interface Subspace {
     artifact_count: number;
     artifacts_count?: number;
     confidence: number;
+    markers: string[];
     created_at: string;
     updated_at: string;
 }
@@ -235,4 +251,29 @@ export interface Profile {
     id: string;
     display_name: string | null;
     avatar_url: string | null;
+}
+
+// ============ Analytics (matching backend/interfaces/api/analytics.py) ============
+
+export interface DomainStat {
+    domain: string;
+    count: number;
+}
+
+export interface SubspaceHealth {
+    name: string;
+    confidence: number;
+}
+
+export interface AnalyticsResponse {
+    total_artifacts: number;
+    engagement_distribution: {
+      latent: number;
+      discovered: number;
+      engaged: number;
+      saturated: number;
+    };
+    top_domains: DomainStat[];
+    activity_level: string; // High, Medium, Low
+    subspace_health: SubspaceHealth[];
 }

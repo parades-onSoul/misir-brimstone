@@ -3,9 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/use-auth';
-import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
-import { AppSidebar } from '@/components/app-sidebar';
-import { SiteHeader } from '@/components/site-header';
+import { AppSidebar } from '@/components/layout/AppSidebar';
 import { CreateSpaceModal } from '@/components/spaces/create-space-modal';
 
 export default function DashboardLayout({
@@ -24,8 +22,8 @@ export default function DashboardLayout({
 
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center">
-                <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            <div className="min-h-screen flex items-center justify-center bg-[#0B0C0E]">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#5E6AD2] border-t-transparent" />
             </div>
         );
     }
@@ -35,18 +33,20 @@ export default function DashboardLayout({
     }
 
     return (
-        <SidebarProvider
-            defaultOpen={false}
-            style={{ "--header-height": "calc(var(--spacing) * 12)" } as React.CSSProperties}
-        >
-            <AppSidebar variant="sidebar" collapsible="icon" />
-            <SidebarInset>
-                <SiteHeader />
-                <div className="flex flex-1 flex-col bg-muted/40">
-                    <main className="@container/main flex flex-1 flex-col gap-2">{children}</main>
+        <div className="flex h-screen w-full overflow-hidden bg-[#0B0C0E] selection:bg-[#5E6AD2]/30">
+            {/* Sidebar (Fixed 260px) */}
+            <AppSidebar />
+
+            {/* Main Content Area (Fluid) */}
+            <main className="flex-1 flex flex-col min-w-0 bg-[#0B0C0E] relative overflow-hidden">
+                {/* Scrollable Content Canvas */}
+                <div className="flex-1 overflow-y-auto">
+                    {children}
                 </div>
-            </SidebarInset>
+            </main>
+
+            {/* Modals */}
             <CreateSpaceModal />
-        </SidebarProvider>
+        </div>
     );
 }

@@ -5,6 +5,7 @@ Subspaces are semantic clusters within spaces.
 For v1, we only need read operations (subspaces created via signals).
 Returns Result[T, ErrorDetail] for type-safe error handling.
 """
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -35,6 +36,7 @@ class SubspaceResult:
     confidence: float
     learning_rate: float
     centroid_embedding: Optional[list[float]]
+    markers: list[str]
 
 
 class SubspaceRepository:
@@ -49,6 +51,20 @@ class SubspaceRepository:
     
     def __init__(self, client: Client):
         self._client = client
+
+    def _parse_embedding(self, embedding_data: any) -> Optional[list[float]]:
+        """Parse embedding from Supabase response (string or list) to list[float]."""
+        if embedding_data is None:
+            return None
+        if isinstance(embedding_data, list):
+            return embedding_data
+        if isinstance(embedding_data, str):
+            try:
+                return json.loads(embedding_data)
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse embedding string: {embedding_data[:50]}...")
+                return None
+        return None
     
     async def get_by_space(
         self, 
@@ -69,15 +85,23 @@ class SubspaceRepository:
             response = (
                 self._client.schema('misir')
                 .from_('subspace')
-                .select('*')
+                .select('*, subspace_marker(marker(label))')
                 .eq('space_id', space_id)
                 .eq('user_id', user_id)
                 .order('artifact_count', desc=True)
                 .execute()
             )
             
-            results = [
-                SubspaceResult(
+            results = []
+            for row in (response.data or []):
+                # Flatten nested markers
+                markers = []
+                if row.get('subspace_marker'):
+                    for sm in row['subspace_marker']:
+                        if sm.get('marker') and sm['marker'].get('label'):
+                            markers.append(sm['marker']['label'])
+
+                results.append(SubspaceResult(
                     id=row['id'],
                     space_id=row['space_id'],
                     name=row['name'],
@@ -86,10 +110,9 @@ class SubspaceRepository:
                     artifact_count=row.get('artifact_count', 0),
                     confidence=row.get('confidence', 0.0),
                     learning_rate=row.get('learning_rate', 0.1),
-                    centroid_embedding=row.get('centroid_embedding')
-                )
-                for row in (response.data or [])
-            ]
+                    centroid_embedding=self._parse_embedding(row.get('centroid_embedding')),
+                    markers=markers
+                ))
             return Ok(results)
             
         except Exception as e:
@@ -120,7 +143,7 @@ class SubspaceRepository:
             response = (
                 self._client.schema('misir')
                 .from_('subspace')
-                .select('*')
+                .select('*, subspace_marker(marker(label))')
                 .eq('id', subspace_id)
                 .eq('user_id', user_id)
                 .execute()
@@ -128,6 +151,14 @@ class SubspaceRepository:
             
             if response.data and len(response.data) > 0:
                 row = response.data[0]
+                
+                # Flatten nested markers
+                markers = []
+                if row.get('subspace_marker'):
+                    for sm in row['subspace_marker']:
+                        if sm.get('marker') and sm['marker'].get('label'):
+                            markers.append(sm['marker']['label'])
+
                 result = SubspaceResult(
                     id=row['id'],
                     space_id=row['space_id'],
@@ -137,7 +168,8 @@ class SubspaceRepository:
                     artifact_count=row.get('artifact_count', 0),
                     confidence=row.get('confidence', 0.0),
                     learning_rate=row.get('learning_rate', 0.1),
-                    centroid_embedding=row.get('centroid_embedding')
+                    centroid_embedding=self._parse_embedding(row.get('centroid_embedding')),
+                    markers=markers
                 )
                 return Ok(result)
             return Ok(None)

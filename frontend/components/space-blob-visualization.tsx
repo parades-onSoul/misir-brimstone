@@ -569,9 +569,19 @@ export function SpaceBlobVisualization({
 
       {/* Hover tooltip */}
       {hoveredSubspace && (
-        <div className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded-md bg-background/90 px-3 py-1 text-xs shadow-sm">
-          <div className="font-medium">{hoveredSubspace.name}</div>
-          <div className="text-muted-foreground">Markers: {(hoveredSubspace.markers || []).slice(0, 3).join(', ') || 'None'}</div>
+        <div className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded-md bg-background/90 px-3 py-1 text-xs shadow-sm border border-border">
+          <div className="font-medium text-foreground">{hoveredSubspace.name}</div>
+          <div className="text-muted-foreground mt-1">
+             <span className="font-semibold text-[10px] uppercase tracking-wider text-muted-foreground/80 mr-1">Markers:</span>
+             <span className="text-foreground/90">
+                {(hoveredSubspace.markers && hoveredSubspace.markers.length > 0) 
+                    ? hoveredSubspace.markers.slice(0, 3).join(', ') 
+                    : 'None'}
+             </span>
+             {(hoveredSubspace.markers?.length || 0) > 3 && (
+                 <span className="text-muted-foreground ml-1">+{hoveredSubspace.markers!.length - 3} more</span>
+             )}
+          </div>
         </div>
       )}
 

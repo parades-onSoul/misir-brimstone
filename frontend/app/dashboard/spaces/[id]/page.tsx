@@ -4,33 +4,24 @@ import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import {
-    ArrowLeft, Plus, Search, MoreVertical, ExternalLink, Clock,
-    Settings, FileText, Layers, Activity, Map,
+    Plus, Search, MoreHorizontal, ExternalLink, Clock,
+    Settings, FileText, Layers, Activity, Calendar, Trash2
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useSpace, useDeleteSpace, useSubspaces } from '@/lib/api/spaces';
 import { useArtifacts } from '@/lib/api/artifacts';
 import type { Artifact } from '@/types/api';
-import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Separator } from '@/components/ui/separator';
-import { Badge } from '@/components/ui/badge';
 import { ArtifactDetailModal } from '@/components/artifacts/artifact-detail-modal';
-import { SpaceBlobVisualization } from '@/components/space-blob-visualization';
-import { SpaceOverviewSidebar } from '@/components/spaces/space-overview-sidebar';
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { SpaceBlobVisualization } from '@/components/space-blob-visualization'; // Assuming this can fit, if not we'll wrap it
+import { cn } from '@/lib/utils';
+// We remove Shadcn imports to use custom Linear styled components
+// import { Button } ...
 
 const engagementColors: Record<string, string> = {
-    ambient: 'bg-gray-500/10 text-gray-400',
-    engaged: 'bg-blue-500/10 text-blue-400',
-    committed: 'bg-amber-500/10 text-amber-400',
+    latent: 'text-[#8A8F98]',
+    discovered: 'text-[#5E6AD2]',
+    engaged: 'text-emerald-500',
+    saturated: 'text-amber-500',
 };
 
 type Tab = 'overview' | 'artifacts';
@@ -39,15 +30,16 @@ export default function SpaceDetailPage() {
     const params = useParams();
     const router = useRouter();
     const { user } = useAuth();
-    const spaceId = parseInt(params.id as string);
+    const rawId = params.id as string;
+    const spaceId = Number.isFinite(Number(rawId)) ? Number(rawId) : undefined;
 
     const [activeTab, setActiveTab] = useState<Tab>('overview');
     const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
 
-    const { data: space, isLoading: spaceLoading } = useSpace(spaceId, user?.id);
-    const { data: subspaces, isLoading: subspacesLoading } = useSubspaces(spaceId, user?.id);
-    const { data: artifacts, isLoading: artifactsLoading } = useArtifacts(spaceId, user?.id);
+    const { data: space, isLoading: spaceLoading } = useSpace(spaceId as number, user?.id);
+    const { data: subspaces, isLoading: subspacesLoading } = useSubspaces(spaceId as number, user?.id);
+    const { data: artifacts, isLoading: artifactsLoading } = useArtifacts(spaceId as number, user?.id);
 
     const filteredArtifacts = artifacts?.filter((a) =>
         (a.title?.toLowerCase() || a.url.toLowerCase()).includes(searchQuery.toLowerCase())
@@ -56,9 +48,11 @@ export default function SpaceDetailPage() {
     const { mutate: deleteSpace, isPending: isDeleting } = useDeleteSpace();
 
     const handleDeleteSpace = () => {
-        if (!user) return;
+        if (!user || !spaceId) return;
         if (confirm('Are you sure you want to delete this space? This action cannot be undone.')) {
-            deleteSpace(spaceId, {
+            deleteSpace(
+                { spaceId, userId: user.id },
+                {
                     onSuccess: () => router.push('/dashboard'),
                     onError: (error) => {
                         console.error('Failed to delete space:', error);
@@ -68,6 +62,37 @@ export default function SpaceDetailPage() {
             );
         }
     };
+
+    if (!spaceId) {
+        return (
+            <div className="flex flex-col items-center justify-center h-screen bg-[#0B0C0E] text-[#EEEEF0]">
+                <h2 className="text-xl font-medium mb-4">Space not found</h2>
+                <button 
+                    onClick={() => router.push('/dashboard/spaces')}
+                    className="h-8 px-4 bg-[#white/[0.05] hover:bg-white/[0.1] rounded text-[13px] font-medium"
+                >
+                    Back to Spaces
+                </button>
+            </div>
+        );
+    }
+
+    if (spaceLoading) {
+        return <div className="min-h-full w-full bg-[#0B0C0E] p-6 text-[#EEEEF0]">Loading...</div>; // Placeholder for now
+    }
+
+    if (!space) {
+        return <div className="min-h-full w-full bg-[#0B0C0E] p-6 text-[#EEEEF0]">Space not found.</div>;
+    }
+
+    // DEBUG: Check markers
+    if (subspaces && subspaces.length > 0) {
+        console.log("DEBUG: First subspace:", {
+            name: subspaces[0].name,
+            markers: subspaces[0].markers,
+            raw: subspaces[0]
+        });
+    }
 
     // Compute stats
     const lastArtifact = artifacts?.length
@@ -82,351 +107,245 @@ export default function SpaceDetailPage() {
         {} as Record<string, number>
     ) ?? {};
 
-    const dominantEngagement = Object.entries(engagementBreakdown).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '—';
+    const dominantEngagement = Object.entries(engagementBreakdown).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'N/A';
     const subspaceCount = subspaces?.length ?? 0;
-    const hasSubspaces = subspaceCount > 0;
-
-    if (spaceLoading) {
-        return (
-            <div className="space-y-6">
-                <Skeleton className="h-10 w-64" />
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-24" />)}
-                </div>
-                <Skeleton className="h-[400px] w-full" />
-            </div>
-        );
-    }
-
-    if (!space) {
-        return (
-            <div className="flex flex-col items-center justify-center py-16">
-                <h2 className="text-2xl font-semibold">Space not found</h2>
-                <Button className="mt-4" onClick={() => router.push('/dashboard')}>
-                    Back to dashboard
-                </Button>
-            </div>
-        );
-    }
-
-    const tabs: { id: Tab; label: string; icon: typeof FileText }[] = [
-        { id: 'overview', label: 'Overview', icon: Map },
-        { id: 'artifacts', label: 'Artifacts', icon: FileText },
-    ];
 
     return (
-        <div className="space-y-6">
-            {/* Header */}
-            <div className="flex items-start justify-between">
-                <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => router.push('/dashboard')}
-                        >
-                            <ArrowLeft className="h-4 w-4" />
-                        </Button>
-                        <motion.h1
-                            initial={{ opacity: 0, x: -20 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            className="text-3xl font-semibold tracking-tight"
-                        >
-                            {space.name}
-                        </motion.h1>
-                    </div>
-                    {space.description && (
-                        <motion.p
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            transition={{ delay: 0.1 }}
-                            className="text-muted-foreground ml-10"
-                        >
-                            {space.description}
-                        </motion.p>
-                    )}
-                </div>
+        <div className="min-h-full w-full bg-[#0B0C0E] text-[#EEEEF0]">
+            
+            {/* 1. Header (Sticky) */}
+            <header className="h-12 flex items-center justify-between px-6 border-b border-white/5 bg-[#0B0C0E]/80 backdrop-blur-md sticky top-0 z-10">
+                <nav className="flex items-center gap-2 text-[13px]">
+                    <Layers className="size-4 text-[#8A8F98]" strokeWidth={1.5} />
+                    <span className="text-[#8A8F98]">Spaces</span>
+                    <span className="text-[#5F646D]">/</span>
+                    <span className="text-[#EEEEF0] font-medium truncate max-w-[200px]">{space.name}</span>
+                </nav>
 
                 <div className="flex items-center gap-2">
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => router.push(`/dashboard/spaces/${spaceId}/configuration`)}
+                    <button 
+                         onClick={handleDeleteSpace}
+                        className="size-7 flex items-center justify-center text-[#8A8F98] hover:text-red-400 hover:bg-red-400/10 rounded transition-colors"
+                        title="Delete Space"
                     >
-                        <Settings className="mr-1.5 h-3.5 w-3.5" />
-                        Configure
-                    </Button>
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                                <MoreVertical className="h-4 w-4" />
-                            </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => router.push(`/dashboard/spaces/${spaceId}/configuration`)}>
-                                Configuration
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                                className="text-destructive focus:text-destructive"
-                                onClick={handleDeleteSpace}
-                                disabled={isDeleting}
-                            >
-                                Delete space
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                </div>
-            </div>
-
-            {/* Stats */}
-            <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-                className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
-            >
-                <Card>
-                    <CardHeader className="pb-2">
-                        <CardDescription className="flex items-center gap-1.5">
-                            <FileText className="h-3 w-3" />
-                            Total Artifacts
-                        </CardDescription>
-                        <CardTitle className="text-3xl">{space.artifact_count}</CardTitle>
-                    </CardHeader>
-                </Card>
-                <Card>
-                    <CardHeader className="pb-2">
-                        <CardDescription className="flex items-center gap-1.5">
-                            <Layers className="h-3 w-3" />
-                            Subspaces
-                        </CardDescription>
-                        <CardTitle className="text-3xl">{subspaceCount}</CardTitle>
-                    </CardHeader>
-                </Card>
-                <Card>
-                    <CardHeader className="pb-2">
-                        <CardDescription className="flex items-center gap-1.5">
-                            <Activity className="h-3 w-3" />
-                            Dominant Engagement
-                        </CardDescription>
-                        <CardTitle className="text-3xl capitalize">{dominantEngagement}</CardTitle>
-                    </CardHeader>
-                </Card>
-                <Card>
-                    <CardHeader className="pb-2">
-                        <CardDescription className="flex items-center gap-1.5">
-                            <Clock className="h-3 w-3" />
-                            Last Capture
-                        </CardDescription>
-                        <CardTitle className="text-xl">
-                            {lastArtifact
-                                ? new Date(lastArtifact.created_at).toLocaleDateString()
-                                : '—'}
-                        </CardTitle>
-                    </CardHeader>
-                </Card>
-            </motion.div>
-
-            {/* Tab Navigation */}
-            <div className="flex items-center gap-1 border-b border-border">
-                {tabs.map((tab) => (
-                    <button
-                        key={tab.id}
-                        onClick={() => setActiveTab(tab.id)}
-                        className={`
-                            flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors
-                            border-b-2 -mb-px
-                            ${activeTab === tab.id
-                                ? 'border-primary text-foreground'
-                                : 'border-transparent text-muted-foreground hover:text-foreground'
-                            }
-                        `}
-                    >
-                        <tab.icon className="h-3.5 w-3.5" />
-                        {tab.label}
-                        {tab.id === 'artifacts' && artifacts && (
-                            <span className="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px]">
-                                {artifacts.length}
-                            </span>
-                        )}
+                        <Trash2 className="size-3.5" strokeWidth={1.5} />
                     </button>
-                ))}
+                    <div className="h-4 w-px bg-white/10 mx-1" />
+                    <button className="text-[13px] text-[#8A8F98] hover:text-[#EEEEF0] font-medium transition-colors">
+                        Settings
+                    </button>
+                </div>
+            </header>
+
+            {/* 2. Content */}
+            <div className="p-6 space-y-6">
+                
+                {/* Title & Desc */}
+                <div>
+                    <h1 className="text-2xl font-semibold tracking-tight text-[#EEEEF0] mb-2">{space.name}</h1>
+                    <p className="text-[14px] text-[#8A8F98] leading-relaxed max-w-3xl">
+                        {space.description || "No description provided."}
+                    </p>
+                </div>
+
+                {/* Tabs */}
+                <div className="flex items-center gap-6 border-b border-white/5 text-[13px] font-medium">
+                    <button 
+                        onClick={() => setActiveTab('overview')}
+                        className={cn(
+                            "pb-3 border-b-2 transition-colors",
+                            activeTab === 'overview' 
+                                ? "text-[#5E6AD2] border-[#5E6AD2]" 
+                                : "text-[#8A8F98] border-transparent hover:text-[#EEEEF0]"
+                        )}
+                    >
+                        Overview
+                    </button>
+                    <button 
+                        onClick={() => setActiveTab('artifacts')}
+                        className={cn(
+                            "pb-3 border-b-2 transition-colors",
+                            activeTab === 'artifacts' 
+                                ? "text-[#5E6AD2] border-[#5E6AD2]" 
+                                : "text-[#8A8F98] border-transparent hover:text-[#EEEEF0]"
+                        )}
+                    >
+                        Artifacts <span className="ml-1 text-[#5F646D]">{artifacts?.length || 0}</span>
+                    </button>
+                </div>
+
+                {/* Tab Content */}
+                {activeTab === 'overview' && (
+                    <motion.div 
+                        initial={{ opacity: 0, y: 10 }} 
+                        animate={{ opacity: 1, y: 0 }}
+                        className="space-y-6"
+                    >
+                        {/* Stats Grid */}
+                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                            <StatBox 
+                                label="Total Artifacts" 
+                                value={space.artifact_count} 
+                                icon={FileText} 
+                            />
+                            <StatBox 
+                                label="Sub-spaces" 
+                                value={subspaceCount} 
+                                icon={Layers} 
+                            />
+                            <StatBox 
+                                label="Dominant State" 
+                                value={dominantEngagement} 
+                                icon={Activity} 
+                                capitalize
+                            />
+                            <StatBox 
+                                label="Last Activity" 
+                                value={lastArtifact ? new Date(lastArtifact.captured_at || lastArtifact.created_at).toLocaleDateString() : '—'} 
+                                icon={Calendar} 
+                            />
+                        </div>
+
+                        {/* Visualization Area */}
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            <div className="lg:col-span-2 h-[400px] bg-[#141517] border border-white/5 rounded-lg overflow-hidden relative">
+                                <div className="absolute top-4 left-4 z-10">
+                                    <h3 className="text-[13px] font-medium text-[#EEEEF0]">Knowledge Graph</h3>
+                                    <p className="text-[11px] text-[#8A8F98]">Semantic relationships</p>
+                                </div>
+                                <div className="absolute inset-0">
+                                     {/* This might need custom width/height/class passed down */}
+                                     {/* Wrapping in div to contain it */}
+                                     <div className="size-full opacity-80 mix-blend-screen bg-black">
+                                         <SpaceBlobVisualization 
+                                            space={{
+                                                id: space.id,
+                                                name: space.name,
+                                                subspaces: (subspaces || []).map((sub) => ({
+                                                    id: String(sub.id),
+                                                    name: sub.name,
+                                                    evidence: Math.max(1, sub.artifact_count || 5),
+                                                    markers: sub.markers || []
+                                                }))
+                                            }}
+                                         />
+                                     </div>
+                                </div>
+                            </div>
+                            
+                            {/* Subspaces List */}
+                            <div className="bg-[#141517] border border-white/5 rounded-lg p-5">
+                                <h3 className="text-[13px] font-medium text-[#EEEEF0] mb-4 flex items-center gap-2">
+                                    <Layers className="size-3.5 text-[#5F646D]" />
+                                    Subspaces {subspaceCount > 0 && `(${subspaceCount})`}
+                                </h3>
+                                
+                                <div className="space-y-2">
+                                    {subspaces && subspaces.length > 0 ? (
+                                        subspaces.map((sub) => (
+                                            <div key={sub.id} className="flex items-center justify-between p-2 rounded bg-white/[0.02] hover:bg-white/[0.04] transition-colors cursor-pointer group">
+                                                <span className="text-[13px] text-[#8A8F98] group-hover:text-[#EEEEF0]">{sub.name}</span>
+                                                <ExternalLink className="size-3 text-[#5F646D] opacity-0 group-hover:opacity-100 transition-opacity" />
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div className="text-[13px] text-[#5F646D] italic">No subspaces found</div>
+                                    )}
+                                </div>
+                                
+                                <button className="mt-4 w-full h-8 flex items-center justify-center gap-2 border border-dashed border-white/10 rounded text-[11px] text-[#8A8F98] hover:text-[#EEEEF0] hover:border-white/20 transition-all">
+                                    <Plus className="size-3" />
+                                    Create Subspace
+                                </button>
+                            </div>
+                        </div>
+                    </motion.div>
+                )}
+
+                {activeTab === 'artifacts' && (
+                    <motion.div 
+                        initial={{ opacity: 0, y: 10 }} 
+                        animate={{ opacity: 1, y: 0 }}
+                    >
+                         {/* Search Bar */}
+                        <div className="relative mb-4 max-w-md">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[#5F646D]" />
+                            <input
+                                type="text"
+                                placeholder="Search artifacts..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="w-full h-9 bg-[#141517] border border-white/5 rounded pl-9 pr-3 text-[13px] text-[#EEEEF0] placeholder:text-[#5F646D] focus:outline-none focus:border-white/10 transition-colors"
+                            />
+                        </div>
+
+                        {/* Artifact List */}
+                        <div className="border border-white/5 rounded-lg bg-[#141517] overflow-hidden">
+                            <div className="grid grid-cols-[1fr,120px,120px] px-4 py-2 border-b border-white/5 bg-white/[0.02] text-[11px] font-medium text-[#5F646D] uppercase tracking-wider">
+                                <div>Title / Source</div>
+                                <div>Status</div>
+                                <div className="text-right">Date</div>
+                            </div>
+                            <div className="divide-y divide-white/[0.02]">
+                                {filteredArtifacts && filteredArtifacts.length > 0 ? (
+                                    filteredArtifacts.map((artifact) => (
+                                        <div 
+                                            key={artifact.id}
+                                            onClick={() => setSelectedArtifact(artifact)}
+                                            className="grid grid-cols-[1fr,120px,120px] px-4 py-3 hover:bg-white/[0.02] cursor-pointer group transition-colors items-center"
+                                        >
+                                            <div className="min-w-0 pr-4">
+                                                <div className="text-[13px] text-[#EEEEF0] truncate font-medium mb-0.5">{artifact.title || 'Untitled'}</div>
+                                                <div className="text-[11px] text-[#5F646D] truncate flex items-center gap-1.5">
+                                                    <ExternalLink className="size-2.5" />
+                                                    {artifact.url}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <span className={cn("text-[11px] font-medium capitalize", engagementColors[artifact.engagement_level] || "text-[#5F646D]")}>
+                                                    {artifact.engagement_level}
+                                                </span>
+                                            </div>
+                                            <div className="text-right text-[11px] text-[#5F646D] font-mono">
+                                                {new Date(artifact.created_at).toLocaleDateString()}
+                                            </div>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="px-4 py-12 text-center text-[13px] text-[#5F646D]">
+                                        No artifacts found matching your search.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </motion.div>
+                )}
+
             </div>
 
-            {/* Tab Content */}
-            {activeTab === 'overview' && (
-                <div className="flex gap-6">
-                    {/* Main visualization */}
-                    <div className="flex-1 space-y-6">
-                        {subspacesLoading ? (
-                            <Skeleton className="h-[360px] w-full" />
-                        ) : hasSubspaces ? (
-                            <motion.div
-                                initial={{ opacity: 0, y: 20 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: 0.3 }}
-                            >
-                                <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                                    <Map className="h-4 w-4 text-primary" />
-                                    Knowledge Map
-                                </h2>
-                                <SpaceBlobVisualization
-                                    space={{
-                                        id: space.id,
-                                        name: space.name,
-                                        subspaces: (subspaces || []).map((subspace) => ({
-                                            id: String(subspace.id),
-                                            name: subspace.name,
-                                            evidence: Math.max(1, subspace.artifact_count ?? subspace.artifacts_count ?? 1),
-                                            markers: [],
-                                        })),
-                                    }}
-                                />
-                            </motion.div>
-                        ) : (
-                            <motion.div
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16"
-                            >
-                                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
-                                    <Map className="h-7 w-7" />
-                                </div>
-                                <h3 className="mt-4 text-lg font-medium">No subspaces to visualize</h3>
-                                <p className="mt-1 text-sm text-muted-foreground">
-                                    Start capturing content with the Misir extension
-                                </p>
-                            </motion.div>
-                        )}
-                    </div>
-
-                    {/* Sidebar */}
-                    {artifacts && artifacts.length > 0 && (
-                        <motion.div
-                            initial={{ opacity: 0, x: 20 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            transition={{ delay: 0.4 }}
-                            className="w-64 flex-shrink-0 hidden lg:block"
-                        >
-                            <div className="sticky top-6">
-                                <SpaceOverviewSidebar
-                                    space={space}
-                                    artifacts={artifacts}
-                                />
-                            </div>
-                        </motion.div>
-                    )}
-                </div>
+            {/* Modals */}
+             {selectedArtifact && (
+                <ArtifactDetailModal
+                    artifact={selectedArtifact}
+                    open={!!selectedArtifact}
+                    onClose={() => setSelectedArtifact(null)}
+                />
             )}
-
-            {activeTab === 'artifacts' && (
-                <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <div className="relative">
-                                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                                <Input
-                                    placeholder="Search artifacts..."
-                                    className="w-72 pl-9"
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                />
-                            </div>
-                        </div>
-                        <span className="text-xs text-muted-foreground">
-                            {filteredArtifacts?.length ?? 0} artifact{(filteredArtifacts?.length ?? 0) !== 1 ? 's' : ''}
-                        </span>
-                    </div>
-
-                    {artifactsLoading ? (
-                        <div className="space-y-3">
-                            {[...Array(3)].map((_, i) => (
-                                <Skeleton key={i} className="h-24 w-full" />
-                            ))}
-                        </div>
-                    ) : filteredArtifacts && filteredArtifacts.length > 0 ? (
-                        <div className="space-y-3">
-                            {filteredArtifacts.map((artifact, index) => (
-                                <motion.div
-                                    key={artifact.id}
-                                    initial={{ opacity: 0, y: 10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    transition={{ delay: index * 0.03 }}
-                                >
-                                    <Card
-                                        className="group cursor-pointer transition-colors hover:border-primary/30 hover:bg-card/80"
-                                        onClick={() => setSelectedArtifact(artifact)}
-                                    >
-                                        <CardHeader className="py-3">
-                                            <div className="flex items-start justify-between">
-                                                <div className="flex-1 space-y-1">
-                                                    <CardTitle className="text-sm font-medium">
-                                                        {artifact.title || artifact.url}
-                                                    </CardTitle>
-                                                    <CardDescription className="flex items-center gap-2 text-xs">
-                                                        <a
-                                                            href={artifact.url}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="flex items-center gap-1 hover:text-foreground"
-                                                            onClick={(e) => e.stopPropagation()}
-                                                        >
-                                                            {artifact.domain}
-                                                            <ExternalLink className="h-2.5 w-2.5" />
-                                                        </a>
-                                                        <span className="text-muted-foreground/40">·</span>
-                                                        <span className="flex items-center gap-1">
-                                                            <Clock className="h-2.5 w-2.5" />
-                                                            {new Date(artifact.created_at).toLocaleDateString()}
-                                                        </span>
-                                                        {artifact.word_count > 0 && (
-                                                            <>
-                                                                <span className="text-muted-foreground/40">·</span>
-                                                                <span>{artifact.word_count.toLocaleString()} words</span>
-                                                            </>
-                                                        )}
-                                                    </CardDescription>
-                                                </div>
-                                                <Badge
-                                                    className={`text-[10px] ${engagementColors[artifact.engagement_level] || engagementColors.ambient}`}
-                                                >
-                                                    {artifact.engagement_level}
-                                                </Badge>
-                                            </div>
-                                        </CardHeader>
-                                    </Card>
-                                </motion.div>
-                            ))}
-                        </div>
-                    ) : (
-                        <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-16"
-                        >
-                            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
-                                <Plus className="h-7 w-7" />
-                            </div>
-                            <h3 className="mt-4 text-lg font-medium">
-                                {searchQuery ? 'No matching artifacts' : 'No artifacts yet'}
-                            </h3>
-                            <p className="mt-1 text-sm text-muted-foreground">
-                                {searchQuery
-                                    ? 'Try adjusting your search query'
-                                    : 'Start capturing content with the Misir extension to populate this space'}
-                            </p>
-                        </motion.div>
-                    )}
-                </div>
-            )}
-
-            {/* Artifact Detail Modal */}
-            <ArtifactDetailModal
-                artifact={selectedArtifact}
-                open={!!selectedArtifact}
-                onClose={() => setSelectedArtifact(null)}
-            />
         </div>
     );
 }
+
+// --- Helper Components ---
+
+const StatBox = ({ label, value, icon: Icon, capitalize }: any) => (
+    <div className="bg-[#141517] border border-white/5 rounded-lg p-4">
+        <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-medium text-[#8A8F98] uppercase tracking-wide">{label}</span>
+            <Icon className="size-3.5 text-[#5F646D]" strokeWidth={1.5} />
+        </div>
+        <div className={cn("text-xl font-semibold text-[#EEEEF0] tracking-tight", capitalize && "capitalize")}>
+            {value}
+        </div>
+    </div>
+);
+

@@ -34,9 +34,10 @@ export default function SpaceConfigurationPage() {
     const params = useParams();
     const router = useRouter();
     const { user } = useAuth();
-    const spaceId = parseInt(params.id as string);
+    const rawId = params.id as string;
+    const spaceId = Number.isFinite(Number(rawId)) ? Number(rawId) : undefined;
 
-    const { data: space, isLoading } = useSpace(spaceId, user?.id);
+    const { data: space, isLoading } = useSpace(spaceId as number, user?.id);
     const { mutate: deleteSpace, isPending: isDeleting } = useDeleteSpace();
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
@@ -55,14 +56,26 @@ export default function SpaceConfigurationPage() {
     ];
 
     const handleDelete = () => {
-        if (!user) return;
-        deleteSpace(spaceId,
+        if (!user || !spaceId) return;
+        deleteSpace(
+            { spaceId, userId: user.id },
             {
                 onSuccess: () => router.push('/dashboard'),
                 onError: () => setShowDeleteDialog(false),
             }
         );
     };
+
+    if (!spaceId) {
+        return (
+            <div className="flex flex-col items-center justify-center py-16">
+                <h2 className="text-2xl font-semibold">Invalid space</h2>
+                <Button className="mt-4" onClick={() => router.push('/dashboard')}>
+                    Back to dashboard
+                </Button>
+            </div>
+        );
+    }
 
     if (isLoading) {
         return (

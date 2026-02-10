@@ -49,9 +49,7 @@ export default function ArtifactsPage() {
     const handleSearch = () => {
         setQuery(searchInput);
         setFilters({
-            spaceId: selectedSpaceId,
-            sourceType: undefined,
-            engagementLevel: undefined,
+            space_id: selectedSpaceId ? parseInt(selectedSpaceId) : undefined,
         });
     };
 

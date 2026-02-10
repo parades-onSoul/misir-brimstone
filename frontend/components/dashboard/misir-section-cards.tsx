@@ -1,15 +1,5 @@
 "use client"
 
-import { IconTrendingDown, IconTrendingUp, IconMinus } from "@tabler/icons-react"
-import { Badge } from "@/components/ui/badge"
-import {
-  Card,
-  CardAction,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
 import { SpaceListResponse } from "@/types/api"
 
 interface MisirSectionCardsProps {
@@ -17,128 +7,80 @@ interface MisirSectionCardsProps {
   isLoading: boolean
 }
 
+// Interface for MetricCard props
+interface MetricCardProps {
+  label: string;
+  value: string | number;
+  subtext: string;
+  status: string;
+}
+
+// Extracted component to avoid re-creation during render
+const MetricCard = ({ label, value, subtext, status }: MetricCardProps) => (
+  <div className="bg-[#0B0C0E] p-5 hover:bg-[#141517] transition-colors group flex flex-col justify-between min-h-35">
+      <div className="space-y-1">
+          <span className="text-[11px] font-medium text-[#5F646D] uppercase tracking-wider">{label}</span>
+          <div className="flex items-center justify-between">
+              <span className="text-3xl font-semibold text-[#EEEEF0] tabular-nums tracking-tight">{value}</span>
+              {status && (
+                  <span className="inline-flex items-center h-5 px-1.5 rounded bg-white/5 text-[11px] font-medium text-[#8A8F98] border border-white/10">
+                      {status}
+                  </span>
+              )}
+          </div>
+      </div>
+      <div className="pt-4 border-t border-white/2 mt-auto">
+           <p className="text-[13px] text-[#8A8F98] truncate">{subtext}</p>
+      </div>
+  </div>
+);
+
 export function MisirSectionCards({ spaces, isLoading }: MisirSectionCardsProps) {
   // Calculate metrics
   const spaceCount = spaces?.count ?? 0
   const totalArtifacts = spaces?.spaces.reduce((sum, s) => sum + s.artifact_count, 0) ?? 0
-  
-  // Mock velocity and drift for now (these would come from analytics endpoint)
   const velocityScore = totalArtifacts > 0 ? Math.min(100, Math.round((totalArtifacts / 10) * 100)) : 0
   const driftScore = 65
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-1 gap-4 px-4 lg:px-6 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-px bg-white/5 border border-white/5 rounded-lg overflow-hidden">
         {[...Array(4)].map((_, i) => (
-          <Card key={i} className="animate-pulse">
-            <CardHeader>
-              <div className="h-4 w-20 bg-muted rounded" />
-              <div className="h-8 w-24 bg-muted rounded mt-2" />
-            </CardHeader>
-          </Card>
+          <div key={i} className="bg-[#0B0C0E] p-5 space-y-3">
+             <div className="h-3 w-20 bg-white/5 rounded animate-pulse" />
+             <div className="h-8 w-16 bg-white/5 rounded animate-pulse" />
+          </div>
         ))}
       </div>
     )
   }
 
   return (
-    <div className="*:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-1 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs lg:px-6 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
-      {/* Total Spaces */}
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>Total Spaces</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {spaceCount}
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline">
-              {spaceCount > 5 ? <IconTrendingUp /> : <IconMinus />}
-              Active
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">
-            Knowledge domains tracked
-          </div>
-          <div className="text-muted-foreground">
-            Organizing your information
-          </div>
-        </CardFooter>
-      </Card>
-
-      {/* Total Artifacts */}
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>Artifacts Captured</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {totalArtifacts}
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline">
-              {totalArtifacts > 50 ? <IconTrendingUp /> : <IconTrendingDown />}
-              {totalArtifacts > 50 ? '+' : ''}
-              {totalArtifacts > 50 ? '12%' : 'Growing'}
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">
-            Content pieces indexed
-          </div>
-          <div className="text-muted-foreground">
-            Building your knowledge base
-          </div>
-        </CardFooter>
-      </Card>
-
-      {/* Velocity Score */}
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>Exploration Velocity</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {velocityScore}%
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline">
-              <IconTrendingUp />
-              Active
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">
-            Learning momentum
-          </div>
-          <div className="text-muted-foreground">
-            Based on capture frequency
-          </div>
-        </CardFooter>
-      </Card>
-
-      {/* Drift Score */}
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>Knowledge Drift</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {driftScore}%
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline">
-              <IconMinus />
-              Moderate
-            </Badge>
-          </CardAction>
-        </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">
-            Attention spread
-          </div>
-          <div className="text-muted-foreground">
-            Tracking focus distribution
-          </div>
-        </CardFooter>
-      </Card>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-px bg-white/5 border border-white/5 rounded-lg overflow-hidden shadow-sm">
+      <MetricCard 
+        label="Total Spaces" 
+        value={spaceCount} 
+        subtext="Knowledge domains tracked"
+        status="Active"
+      />
+      <MetricCard 
+        label="Artifacts" 
+        value={totalArtifacts} 
+        subtext="Content pieces indexed"
+        status="+12%"
+      />
+      <MetricCard 
+        label="Velocity" 
+        value={`${velocityScore}%`} 
+        subtext="Learning momentum"
+        status="Stable"
+      />
+      <MetricCard 
+        label="Drift" 
+        value={`${driftScore}%`} 
+        subtext="Attention spread"
+        status="Safe"
+      />
     </div>
   )
 }

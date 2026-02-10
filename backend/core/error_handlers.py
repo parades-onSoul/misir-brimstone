@@ -53,7 +53,7 @@ def get_status_code(error_type: str) -> int:
     return ERROR_TYPE_TO_STATUS.get(error_type, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-def create_problem_response(error: ErrorDetail, request_path: str = None) -> Problem:
+def create_problem_response(error: ErrorDetail, request_path: str = None) -> JSONResponse:
     """
     Convert ErrorDetail to RFC 9457 Problem response.
     
@@ -62,7 +62,7 @@ def create_problem_response(error: ErrorDetail, request_path: str = None) -> Pro
         request_path: Optional request path for logging
         
     Returns:
-        Problem response with standardized format
+        JSONResponse with standardized problem format
     """
     status_code = get_status_code(error.error_type)
     
@@ -82,12 +82,19 @@ def create_problem_response(error: ErrorDetail, request_path: str = None) -> Pro
             path=request_path
         )
     
-    return Problem(
-        status=status_code,
-        title=_get_title_for_status(status_code),
-        detail=error.message,
-        type_=error.error_type,
-        extra=error.context if error.context else None
+    content = {
+        "status": status_code,
+        "title": _get_title_for_status(status_code),
+        "detail": error.message,
+        "type": error.error_type,
+    }
+    if error.context:
+        content.update(error.context)
+
+    return JSONResponse(
+        status_code=status_code,
+        content=content,
+        media_type="application/problem+json"
     )
 
 
@@ -128,12 +135,16 @@ async def pydantic_validation_error_handler(request: Request, exc: ValidationErr
         message = f"{field}: {error['msg']}"
         error_messages.append(message)
     
-    return Problem(
-        status=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        title="Validation Error",
-        detail="Request validation failed. Please check your input.",
-        type_="validation-error",
-        extra={"errors": error_messages}
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        content={
+            "status": status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "title": "Validation Error",
+            "detail": "Request validation failed. Please check your input.",
+            "type": "validation-error",
+            "errors": error_messages
+        },
+        media_type="application/problem+json"
     )
 
 
@@ -149,11 +160,15 @@ async def value_error_handler(request: Request, exc: ValueError):
         path=str(request.url.path)
     )
     
-    return Problem(
-        status=status.HTTP_400_BAD_REQUEST,
-        title="Bad Request",
-        detail=str(exc),
-        type_="value-error"
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={
+            "status": status.HTTP_400_BAD_REQUEST,
+            "title": "Bad Request",
+            "detail": str(exc),
+            "type": "value-error"
+        },
+        media_type="application/problem+json"
     )
 
 
@@ -171,14 +186,14 @@ async def generic_exception_handler(request: Request, exc: Exception):
         exc_info=exc
     )
     
-    return Problem(
-        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        title="Internal Server Error",
-        detail="An unexpected error occurred. Please try again later.",
-        type_="internal-error",
-        extra={
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "status": status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "title": "Internal Server Error",
+            "detail": "An unexpected error occurred. Please try again later.",
+            "type": "internal-error",
             "exception_type": type(exc).__name__,
-            # Only include exception message in development
-            # In production, you might want to hide this
-        }
+        },
+        media_type="application/problem+json"
     )

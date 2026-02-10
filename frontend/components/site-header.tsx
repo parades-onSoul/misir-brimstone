@@ -1,6 +1,6 @@
-import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { SidebarTrigger } from "@/components/ui/sidebar"
+import { BackendStatus } from "@/components/backend-status"
 
 export function SiteHeader() {
   return (
@@ -12,6 +12,9 @@ export function SiteHeader() {
           className="mx-2 data-[orientation=vertical]:h-4"
         />
         <h1 className="text-base font-medium">Misir Dashboard</h1>
+        <div className="ml-auto">
+          <BackendStatus showButton />
+        </div>
       </div>
     </header>
   )

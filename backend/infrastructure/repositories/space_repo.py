@@ -40,7 +40,8 @@ class SpaceRepository:
         self, 
         user_id: str, 
         name: str, 
-        description: Optional[str] = None
+        description: Optional[str] = None,
+        embedding: Optional[list[float]] = None
     ) -> SpaceResult:
         """
         Create a new space.
@@ -60,6 +61,8 @@ class SpaceRepository:
             }
             if description:
                 data['description'] = description
+            if embedding:
+                data['embedding'] = embedding
             
             response = (
                 self._client.schema('misir')

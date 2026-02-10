@@ -128,3 +128,28 @@ class Marker:
     
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
+class Insight:
+    """
+    Actionable intelligence generated from space activity.
+    Maps to misir.insight table.
+    """
+    id: int
+    user_id: str
+    headline: str
+    description: Optional[str] = None
+    insight_data: dict = field(default_factory=dict)
+    
+    # Metadata
+    space_id: Optional[int] = None
+    subspace_id: Optional[int] = None
+    
+    # Status
+    severity: str = "low" # low, medium, high, critical
+    status: str = "active" # active, dismissed, acted
+    
+    dismissed_at: Optional[datetime] = None
+    acted_at: Optional[datetime] = None
+    created_at: datetime = field(default_factory=datetime.now)

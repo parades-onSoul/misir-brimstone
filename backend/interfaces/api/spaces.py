@@ -27,11 +27,28 @@ router = APIRouter(prefix="/spaces", tags=["spaces"])
 
 
 # Request/Response models
-class CreateSpaceRequest(BaseModel):
-    """Request to create a space."""
-    user_id: str
+class CreateMarkerInput(BaseModel):
+    """Marker to create for a subspace."""
+    text: str
+
+
+class CreateSubspaceInput(BaseModel):
+    """Subspace to create with a space."""
     name: str
     description: Optional[str] = None
+    markers: list[str] = []
+    depth: Optional[str] = None
+    prerequisites: list[str] = []
+    suggested_study_order: Optional[int] = None
+
+
+class CreateSpaceRequest(BaseModel):
+    """Request to create a space."""
+    user_id: Optional[str] = None  # Can come from JWT
+    name: str
+    description: Optional[str] = None
+    intention: Optional[str] = None
+    subspaces: list[CreateSubspaceInput] = []
 
 
 class SpaceResponse(BaseModel):
@@ -122,10 +139,29 @@ async def create_space(
         Problem (500): If an unexpected error occurs
     """
     handler = SpaceHandler(client)
+    
+    # Extract user_id from body or use default (should come from JWT in production)
+    user_id = body.user_id if body.user_id else "anonymous"
+    
+    # Convert subspaces to dict format
+    subspaces_data = [
+        {
+            'name': sub.name,
+            'description': sub.description,
+            'markers': sub.markers,
+            'depth': sub.depth,
+            'prerequisites': sub.prerequisites,
+            'suggested_study_order': sub.suggested_study_order
+        }
+        for sub in body.subspaces
+    ] if body.subspaces else []
+    
     cmd = CreateSpaceCommand(
-        user_id=body.user_id,
+        user_id=user_id,
         name=body.name,
-        description=body.description
+        description=body.description,
+        intention=body.intention,
+        subspaces=subspaces_data
     )
     result = await handler.create(cmd)
     

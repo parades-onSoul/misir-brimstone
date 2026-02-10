@@ -39,10 +39,12 @@ export default function OnboardingPage() {
         for (const topic of validTopics) {
             try {
                 await createSpace({
-                    user_id: user.id,
-                    name: topic.trim(),
-                    description: `Tracking learnings about ${topic.trim()}`,
-                    // No intention = manual mode (no AI generation for onboarding)
+                    userId: user.id,
+                    data: {
+                        name: topic.trim(),
+                        description: `Tracking learnings about ${topic.trim()}`,
+                        // No intention = manual mode (no AI generation for onboarding)
+                    }
                 });
                 setSeededCount((prev) => prev + 1);
             } catch (err) {

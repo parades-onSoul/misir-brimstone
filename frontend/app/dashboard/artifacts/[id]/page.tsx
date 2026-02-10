@@ -71,11 +71,12 @@ export default function ArtifactDetailPage({ params }: { params: { id: string } 
     };
 
     const handleSave = async () => {
-        if (!artifact) return;
+        if (!artifact || !user) return;
 
         try {
             await updateMutation.mutateAsync({
                 artifactId: parseInt(artifact.id),
+                userId: user.id,
                 data: {
                     title: editedTitle,
                     content: editedContent,
@@ -88,10 +89,13 @@ export default function ArtifactDetailPage({ params }: { params: { id: string } 
     };
 
     const handleDelete = async () => {
-        if (!artifact || !confirm('Are you sure you want to delete this artifact?')) return;
+        if (!artifact || !user || !confirm('Are you sure you want to delete this artifact?')) return;
 
         try {
-            await deleteMutation.mutateAsync(parseInt(artifact.id));
+            await deleteMutation.mutateAsync({
+                artifactId: parseInt(artifact.id),
+                userId: user.id,
+            });
             router.push('/dashboard/artifacts');
         } catch (error) {
             console.error('Failed to delete artifact:', error);

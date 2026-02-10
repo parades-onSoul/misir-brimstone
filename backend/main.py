@@ -16,6 +16,8 @@ from interfaces.api import capture_router
 from interfaces.api.spaces import router as spaces_router
 from interfaces.api.subspaces import router as subspaces_router
 from interfaces.api.search import router as search_router
+from interfaces.api.analytics import router as analytics_router
+from interfaces.api.insights import router as insights_router
 
 # Initialize structured logging
 configure_logging(log_level=settings.LOG_LEVEL)
@@ -122,6 +124,18 @@ app.include_router(
     prefix=f"{settings.API_V1_STR}",
     tags=["Search"]
 )
+
+app.include_router(
+    analytics_router,
+    prefix=f"{settings.API_V1_STR}",
+    tags=["Analytics"]
+)
+app.include_router(
+    insights_router,
+    prefix=f"{settings.API_V1_STR}",
+    tags=["Insights"]
+)
+
 
 # Internal Dashboard (no prefix - served at /dashboard)
 from interfaces.api.dashboard import router as dashboard_router

@@ -1,19 +1,19 @@
-# Gemini AI Space Generation Integration
+# Groq AI Space Generation Integration
 
 ## Overview
 
-The frontend now uses Gemini AI to generate intelligent space structures with subspaces and markers. This replaces manual space creation with AI-powered semantic knowledge architecture.
+The frontend now uses Groq AI (Llama 3) to generate intelligent space structures with subspaces and markers. This replaces manual space creation with AI-powered semantic knowledge architecture.
 
 ## Architecture
 
 ```
-User Input → Gemini AI → Subspaces + Markers → Backend → Nomic Embeddings → Database
+User Input → Groq AI → Subspaces + Markers → Backend → Nomic Embeddings → Database
 ```
 
 ### Flow
 
 1. **Frontend**: User creates space with name, description, intention
-2. **Gemini**: Generates 4-8 subspaces with 4-6 markers each (adaptive based on complexity)
+2. **Groq**: Generates 4-8 subspaces with 4-6 markers each (adaptive based on complexity)
 3. **Backend**: Embeds markers using Nomic AI (768-dim vectors)
 4. **Database**: Stores space, subspaces, markers with embeddings + centroids
 

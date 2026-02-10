@@ -40,32 +40,45 @@ export default function SearchPage() {
     }, [query]);
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-8">
             {/* Header */}
-            <div className="space-y-2">
-                <h1 className="text-2xl font-semibold tracking-tight">Search</h1>
-                <p className="text-muted-foreground">
+            <motion.div 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-3"
+            >
+                <h1 className="text-3xl font-semibold tracking-tight">Search</h1>
+                <p className="text-base text-muted-foreground">
                     Semantic search across your artifacts
                 </p>
-            </div>
+            </motion.div>
 
             {/* Search Input */}
-            <div className="flex items-center gap-4">
+            <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+                className="flex items-center gap-4"
+            >
                 <div className="relative flex-1">
-                    <SearchIcon className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                    <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/50" />
                     <Input
-                        placeholder="Search your knowledge..."
-                        className="pl-9"
+                        type="search"
+                        placeholder="Search your knowledge by meaning or keywords..."
+                        className="pl-11 h-12 text-[15px] border-border/60 shadow-sm focus:shadow-md transition-shadow"
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
                         autoFocus
+                        autoComplete="off"
+                        aria-autocomplete="none"
+                        spellCheck={false}
                     />
                 </div>
                 <Select value={spaceFilter} onValueChange={setSpaceFilter}>
-                    <SelectTrigger className="w-48">
+                    <SelectTrigger className="w-52 h-12 border-border/60 shadow-sm">
                         <SelectValue placeholder="All spaces" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="border-border/60">
                         <SelectItem value="all">All spaces</SelectItem>
                         {spaces?.spaces.map((space) => (
                             <SelectItem key={space.id} value={String(space.id)}>
@@ -74,28 +87,63 @@ export default function SearchPage() {
                         ))}
                     </SelectContent>
                 </Select>
-            </div>
+            </motion.div>
 
             {/* Results */}
-            <div className="space-y-4">
+            <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 0.2 }}
+                className="space-y-4"
+            >
                 {!debouncedQuery ? (
                     <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        className="flex flex-col items-center justify-center py-16 text-center"
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: 0.3, duration: 0.4 }}
+                        className="flex flex-col items-center justify-center py-20 text-center"
                     >
-                        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
-                            <Sparkles className="h-7 w-7" />
-                        </div>
-                        <h3 className="mt-4 text-lg font-medium">Semantic search</h3>
-                        <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                        <motion.div 
+                            animate={{ 
+                                scale: [1, 1.05, 1],
+                                rotate: [0, 5, 0]
+                            }}
+                            transition={{ 
+                                duration: 3,
+                                repeat: Infinity,
+                                ease: "easeInOut"
+                            }}
+                            className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-primary shadow-lg"
+                        >
+                            <Sparkles className="h-8 w-8" />
+                        </motion.div>
+                        <h3 className="mt-6 text-xl font-semibold tracking-tight">Semantic search</h3>
+                        <p className="mt-2 max-w-md text-base text-muted-foreground leading-relaxed">
                             Search by meaning, not just keywords. Try asking a question or describing what you're looking for.
                         </p>
                     </motion.div>
                 ) : isLoading ? (
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                         {[...Array(3)].map((_, i) => (
-                            <Skeleton key={i} className="h-32 w-full" />
+                            <motion.div
+                                key={i}
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: i * 0.1 }}
+                            >
+                                <Card className="border-border/40">
+                                    <CardHeader className="space-y-3">
+                                        <div className="space-y-2">
+                                            <Skeleton className="h-5 w-3/4 bg-muted/50" />
+                                            <Skeleton className="h-4 w-1/2 bg-muted/30" />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <Skeleton className="h-3 w-full bg-muted/30" />
+                                            <Skeleton className="h-3 w-5/6 bg-muted/30" />
+                                        </div>
+                                    </CardHeader>
+                                </Card>
+                            </motion.div>
                         ))}
                     </div>
                 ) : results && results.results.length > 0 ? (
@@ -108,15 +156,15 @@ export default function SearchPage() {
                                 {results.dimension_used}d embeddings
                             </p>
                         </div>
-                        <div className="space-y-3">
+                        <div className="space-y-4">
                             {results.results.map((result, index) => (
                                 <motion.div
                                     key={result.artifact_id}
-                                    initial={{ opacity: 0, y: 10 }}
+                                    initial={{ opacity: 0, y: 20 }}
                                     animate={{ opacity: 1, y: 0 }}
-                                    transition={{ delay: index * 0.05 }}
+                                    transition={{ delay: index * 0.05, duration: 0.3 }}
                                 >
-                                    <Card className="group cursor-pointer transition-colors hover:border-primary/50 hover:bg-card/80">
+                                    <Card className="group cursor-pointer transition-all duration-300 hover:border-primary/40 hover:bg-card/80 hover:shadow-md border-border/40">
                                         <CardHeader>
                                             <div className="flex items-start justify-between gap-4">
                                                 <div className="flex-1 space-y-1">
@@ -166,7 +214,7 @@ export default function SearchPage() {
                         </p>
                     </motion.div>
                 )}
-            </div>
+            </motion.div>
         </div>
     );
 }

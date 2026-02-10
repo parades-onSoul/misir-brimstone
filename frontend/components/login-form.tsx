@@ -54,49 +54,64 @@ export function LoginForm({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 30 }}
       animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
       className={cn("flex flex-col gap-6", className)}
     >
-      <Card>
-        <CardHeader className="text-center">
-          <CardTitle className="text-xl">Welcome to Misir</CardTitle>
-          <CardDescription>
-            Sign in to your account to continue
+      <Card className="border-border/40 shadow-2xl">
+        <CardHeader className="text-center space-y-3 pb-8 border-b border-border/40 bg-gradient-to-b from-secondary/30 to-secondary/10">
+          <motion.div
+            initial={{ scale: 0.9 }}
+            animate={{ scale: 1 }}
+            transition={{ delay: 0.2, duration: 0.3 }}
+          >
+            <CardTitle className="text-2xl font-semibold tracking-tight">Welcome to Misir</CardTitle>
+          </motion.div>
+          <CardDescription className="text-sm text-muted-foreground/80">
+            Sign in to your orientation system
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-8 px-8 pb-8">
           <form onSubmit={handleSubmit}>
-            <FieldGroup>
+            <FieldGroup className="space-y-5">
               {error && (
-                <div className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+                <motion.div
+                  initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ duration: 0.2 }}
+                  className="rounded-lg bg-destructive/10 border border-destructive/20 p-4 text-sm text-destructive font-medium shadow-sm"
+                >
                   {error}
-                </div>
+                </motion.div>
               )}
-              <Field>
-                <FieldLabel htmlFor="email">Email</FieldLabel>
+              <Field className="space-y-2.5">
+                <FieldLabel htmlFor="email" className="text-sm font-medium text-foreground">Email</FieldLabel>
                 <Input
                   id="email"
                   type="email"
-                  placeholder="m@example.com"
+                  placeholder="name@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   autoFocus
+                  className="notion-input h-11 text-[15px] px-4"
                 />
               </Field>
-              <Field>
-                <FieldLabel htmlFor="password">Password</FieldLabel>
+              <Field className="space-y-2.5">
+                <FieldLabel htmlFor="password" className="text-sm font-medium text-foreground">Password</FieldLabel>
                 <Input
                   id="password"
                   type="password"
+                  placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
+                  className="notion-input h-11 text-[15px] px-4"
                 />
               </Field>
-              <Field>
-                <Button type="submit" disabled={isLoading} className="w-full">
+              <Field className="pt-2">
+                <Button type="submit" disabled={isLoading} className="notion-button-primary w-full h-11 text-[15px] font-medium shadow-md hover:shadow-lg transition-all">
                   {isLoading ? (
                     <motion.span
                       initial={{ opacity: 0 }}

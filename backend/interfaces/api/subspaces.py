@@ -31,6 +31,7 @@ class SubspaceResponse(BaseModel):
     confidence: float
     learning_rate: float
     centroid_embedding: Optional[list[float]] = None
+    markers: List[str] = []
 
 
 def get_supabase_client() -> Client:
@@ -87,6 +88,7 @@ async def list_subspaces(
             confidence=s.confidence,
             learning_rate=s.learning_rate,
             centroid_embedding=s.centroid_embedding,
+            markers=s.markers
         )
         for s in subspaces
     ]
