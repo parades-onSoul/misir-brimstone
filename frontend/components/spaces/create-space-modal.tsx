@@ -89,8 +89,8 @@ export function CreateSpaceModal() {
 
     return (
         <Dialog open={createSpaceModalOpen} onOpenChange={closeCreateSpaceModal}>
-            <DialogContent className="sm:max-w-[540px] border-border/40 shadow-2xl">
-                <DialogHeader className="pb-6 border-b border-border/40 bg-gradient-to-b from-secondary/20 to-transparent -mx-6 px-6 -mt-6 pt-6">
+            <DialogContent className="sm:max-w-135 border-border/40 shadow-2xl">
+                <DialogHeader className="pb-6 border-b border-border/40 bg-linear-to-b from-secondary/20 to-transparent -mx-6 px-6 -mt-6 pt-6">
                     <div className="flex items-center gap-3">
                         <motion.div 
                             animate={{ 
@@ -102,7 +102,7 @@ export function CreateSpaceModal() {
                                 repeat: Infinity,
                                 ease: "easeInOut"
                             }}
-                            className="flex items-center justify-center size-10 rounded-xl bg-gradient-to-br from-primary to-primary/80 shadow-lg"
+                            className="flex items-center justify-center size-10 rounded-xl bg-linear-to-br from-primary to-primary/80 shadow-lg"
                         >
                             <Sparkles className="size-5 text-primary-foreground" />
                         </motion.div>
@@ -111,7 +111,7 @@ export function CreateSpaceModal() {
                         </div>
                     </div>
                     <DialogDescription className="text-sm text-muted-foreground/80 mt-3 leading-relaxed">
-                        AI will analyze your learning goal and build a structured knowledge space with subspaces and semantic markers.
+                        AI will analyze your learning goal and build a structured knowledge space with topic areas and semantic markers.
                     </DialogDescription>
                 </DialogHeader>
                 
@@ -127,7 +127,7 @@ export function CreateSpaceModal() {
                             onChange={(e) => setName(e.target.value)}
                             autoFocus
                             required
-                            className="notion-input h-11 text-[15px] px-4 border-border/60"
+                            className="h-11 px-4 bg-muted/30 border-border text-[13px] text-foreground placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-colors"
                         />
                         <p className="text-xs text-muted-foreground/70 leading-relaxed">
                             Choose a clear topic or domain you want to explore
@@ -144,10 +144,10 @@ export function CreateSpaceModal() {
                             value={intention}
                             onChange={(e) => setIntention(e.target.value)}
                             required
-                            className="notion-input h-11 text-[15px] px-4 border-border/60"
+                            className="h-11 px-4 bg-muted/30 border-border text-[13px] text-foreground placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-colors"
                         />
                         <p className="text-xs text-muted-foreground/70 flex items-center gap-2 leading-relaxed">
-                            <Sparkles className="h-3 w-3 text-primary flex-shrink-0" />
+                            <Sparkles className="h-3 w-3 text-primary shrink-0" />
                             <span>Be specific — AI tailors the structure to your goal</span>
                         </p>
                     </div>
@@ -160,7 +160,7 @@ export function CreateSpaceModal() {
                                 exit={{ opacity: 0, y: -10 }}
                                 className="flex items-start gap-2 p-3 rounded-md bg-destructive/10 border border-destructive/20"
                             >
-                                <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
+                                <AlertCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
                                 <p className="text-sm text-destructive">{error}</p>
                             </motion.div>
                         )}
@@ -171,7 +171,7 @@ export function CreateSpaceModal() {
                             type="button"
                             variant="ghost"
                             onClick={closeCreateSpaceModal}
-                            className="notion-hover h-9"
+                            className="h-9 text-[#8A8F98] hover:text-[#EEEEF0] hover:bg-white/5"
                             disabled={isPending}
                         >
                             Cancel
@@ -179,7 +179,7 @@ export function CreateSpaceModal() {
                         <Button 
                             type="submit" 
                             disabled={isPending || !name.trim() || !intention.trim()}
-                            className="notion-button-primary h-9 min-w-[140px]"
+                            className="h-9 min-w-35 bg-[#5E6AD2] hover:bg-[#5E6AD2]/90 text-white text-[13px] font-medium transition-colors"
                         >
                             {isPending ? (
                                 <motion.span

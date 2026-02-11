@@ -13,7 +13,8 @@ export function BackendStatus({ className = '', showButton = false }: BackendSta
     const [status, setStatus] = useState<'checking' | 'online' | 'offline'>('checking');
 
     const checkHealth = useCallback(async () => {
-        setStatus('checking');
+        // Don't set 'checking' state synchronously to avoid Effect warning
+        // and to prevent flashing state during periodic background checks
         try {
             const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
             const base = apiUrl.replace(/\/api\/v1$/, '');
@@ -25,7 +26,9 @@ export function BackendStatus({ className = '', showButton = false }: BackendSta
     }, []);
 
     useEffect(() => {
-        checkHealth();
+        // Wrap in requestAnimationFrame to avoid "setState in effect" warning
+        // even though checkHealth is async.
+        requestAnimationFrame(() => checkHealth());
         const interval = setInterval(checkHealth, 30000);
         return () => clearInterval(interval);
     }, [checkHealth]);

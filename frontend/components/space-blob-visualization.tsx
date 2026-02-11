@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { Application, Graphics, Container, BlurFilter } from 'pixi.js';
+import { Application, Graphics, Container, BlurFilter, FederatedPointerEvent } from 'pixi.js';
 import { Button } from '@/components/ui/button';
 import { RotateCcw, ZoomIn, ZoomOut } from 'lucide-react';
 
@@ -43,10 +43,10 @@ const STATE_COLORS: Record<StateIndex, number> = {
 };
 
 const STATE_NAMES: Record<StateIndex, string> = {
-  0: 'Latent',
-  1: 'Discovered',
-  2: 'Engaged',
-  3: 'Saturated',
+  0: 'Skimmed',
+  1: 'Read',
+  2: 'Studied',
+  3: 'Deep Dive',
 };
 
 // ============================================================================
@@ -157,15 +157,19 @@ export function SpaceBlobVisualization({
   const [, setPan] = useState({ x: 0, y: 0 }); // Pan state for world position
   const [resizeKey, setResizeKey] = useState(0); // Force re-render on resize
 
-  // Track previous states for animation
-  const previousStatesRef = useRef<Map<string, StateIndex>>(new Map());
-
   // Track node data for animation access
   const nodeDataRef = useRef<SubspaceNode[]>([]);
 
   // Drag state for panning
   const isDragging = useRef(false);
   const lastPos = useRef({ x: 0, y: 0 });
+
+  // Refs for callbacks to avoid re-initializing Pixi on prop changes
+  const callbacksRef = useRef({ onSubspaceClick, onSubspaceDoubleClick, onSubspaceHover });
+
+  useEffect(() => {
+    callbacksRef.current = { onSubspaceClick, onSubspaceDoubleClick, onSubspaceHover };
+  }, [onSubspaceClick, onSubspaceDoubleClick, onSubspaceHover]);
 
   // Use prop massVector if provided, otherwise fall back to space.stateVector
   const effectiveMassVector = useMemo(() => {
@@ -316,7 +320,7 @@ export function SpaceBlobVisualization({
       const nodeContainer = new Container();
       world.addChild(nodeContainer);
 
-      nodeDataRef.current = subspaces.map((subspace, index) => {
+      nodeDataRef.current = subspaces.map((subspace) => {
         const state = getStateFromEvidence(subspace.evidence || 0);
         const stateSubspaces = subspacesByState[state];
         const stateIndex = stateSubspaces.findIndex((s) => s.id === subspace.id);
@@ -355,24 +359,24 @@ export function SpaceBlobVisualization({
           circle.scale.set(1.3);
           const subspace = subspaces.find((s) => s.id === node.id) || null;
           setHoveredSubspace(subspace);
-          onSubspaceHover?.(subspace);
+          callbacksRef.current.onSubspaceHover?.(subspace);
         });
 
         circle.on('pointerleave', () => {
           circle.scale.set(1);
           setHoveredSubspace(null);
-          onSubspaceHover?.(null);
+          callbacksRef.current.onSubspaceHover?.(null);
         });
 
         circle.on('pointertap', () => {
           const subspace = subspaces.find((s) => s.id === node.id);
-          if (subspace) onSubspaceClick?.(subspace);
+          if (subspace) callbacksRef.current.onSubspaceClick?.(subspace);
         });
 
-        circle.on('pointerup', (event: any) => {
+        circle.on('pointerup', (event: FederatedPointerEvent) => {
           if (event.detail === 2) {
             const subspace = subspaces.find((s) => s.id === node.id);
-            if (subspace) onSubspaceDoubleClick?.(subspace);
+            if (subspace) callbacksRef.current.onSubspaceDoubleClick?.(subspace);
           }
         });
 
@@ -535,7 +539,7 @@ export function SpaceBlobVisualization({
   }, [selectedSubspaceId]);
 
   return (
-    <div className="relative h-[520px] w-full overflow-hidden rounded-xl border border-border bg-background/80">
+    <div className="relative h-130 w-full overflow-hidden rounded-xl border border-border bg-background/80">
       <div key={resizeKey} ref={containerRef} className="absolute inset-0" />
 
       {/* Controls */}

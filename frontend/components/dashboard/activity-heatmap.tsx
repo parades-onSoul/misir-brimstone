@@ -100,7 +100,7 @@ export function ActivityHeatmap({ data, weeks = 13, className = '' }: ActivityHe
                 {/* Day labels */}
                 <div className="flex flex-col gap-0.5 pr-1">
                     {DAY_LABELS.map((label, i) => (
-                        <div key={i} className="h-[12px] w-6 text-[10px] text-muted-foreground text-right leading-[12px]">
+                        <div key={i} className="h-3 w-6 text-[10px] text-muted-foreground text-right leading-3">
                             {label}
                         </div>
                     ))}
@@ -116,7 +116,7 @@ export function ActivityHeatmap({ data, weeks = 13, className = '' }: ActivityHe
                                     initial={{ opacity: 0 }}
                                     animate={{ opacity: 1 }}
                                     transition={{ delay: (colIdx * 7 + cellIdx) * 0.002 }}
-                                    className={`h-[12px] w-[12px] rounded-[2px] ${getColor(cell.count)} transition-colors`}
+                                    className={`h-3 w-3 rounded-[2px] ${getColor(cell.count)} transition-colors`}
                                     title={`${cell.date}: ${cell.count} artifact${cell.count !== 1 ? 's' : ''}`}
                                 />
                             ))}
@@ -129,7 +129,7 @@ export function ActivityHeatmap({ data, weeks = 13, className = '' }: ActivityHe
             <div className="mt-2 flex items-center gap-1 ml-8 text-[10px] text-muted-foreground">
                 <span>Less</span>
                 {COLORS.map((color, i) => (
-                    <div key={i} className={`h-[10px] w-[10px] rounded-[1px] ${color}`} />
+                    <div key={i} className={`h-2.5 w-2.5 rounded-[1px] ${color}`} />
                 ))}
                 <span>More</span>
             </div>

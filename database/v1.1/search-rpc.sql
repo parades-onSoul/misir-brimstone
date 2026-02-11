@@ -23,7 +23,10 @@ RETURNS TABLE (
     subspace_id BIGINT,
     distance FLOAT,
     title TEXT,
-    url TEXT
+    url TEXT,
+    content_preview TEXT,
+    engagement_level TEXT,
+    dwell_time_ms BIGINT
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -37,7 +40,10 @@ BEGIN
         s.subspace_id,
         (s.vector <=> p_query_vector)::FLOAT AS distance,
         a.title,
-        a.url
+        a.url,
+        LEFT(a.content, 200) AS content_preview,
+        a.engagement_level::TEXT,
+        a.dwell_time_ms
     FROM misir.signal s
     JOIN misir.artifact a ON a.id = s.artifact_id
     WHERE s.user_id = p_user_id
@@ -67,7 +73,7 @@ Parameters:
   - p_space_id: Optional space filter
   - p_subspace_id: Optional subspace filter
   - p_threshold: Min similarity 0-1 (default 0.7)
-Returns: signal_id, artifact_id, space_id, subspace_id, distance, title, url';
+Returns: signal_id, artifact_id, space_id, subspace_id, distance, title, url, content_preview, engagement_level, dwell_time_ms';
 
 -- =============================================================================
 -- VERIFICATION

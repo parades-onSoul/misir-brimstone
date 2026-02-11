@@ -16,8 +16,9 @@ from interfaces.api import capture_router
 from interfaces.api.spaces import router as spaces_router
 from interfaces.api.subspaces import router as subspaces_router
 from interfaces.api.search import router as search_router
-from interfaces.api.analytics import router as analytics_router
+from interfaces.api.analytics import router as analytics_router, global_router as global_analytics_router
 from interfaces.api.insights import router as insights_router
+from interfaces.api.profile import router as profile_router
 
 # Initialize structured logging
 configure_logging(log_level=settings.LOG_LEVEL)
@@ -55,11 +56,16 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Error Handling - RFC 9457 (Problem Details for HTTP APIs)
 from pydantic import ValidationError
+from fastapi_problem.error import Problem
+from fastapi_problem.handler import new_exception_handler
 from core.error_handlers import (
     pydantic_validation_error_handler,
     value_error_handler,
     generic_exception_handler
 )
+
+# Register RFC 9457 Problem exception handler
+app.add_exception_handler(Problem, new_exception_handler())
 
 # Register error handlers in order of specificity
 app.add_exception_handler(ValidationError, pydantic_validation_error_handler)
@@ -126,14 +132,26 @@ app.include_router(
 )
 
 app.include_router(
-    analytics_router,
+    global_analytics_router,
     prefix=f"{settings.API_V1_STR}",
+    tags=["Analytics"]
+)
+
+app.include_router(
+    analytics_router,
+    prefix=f"{settings.API_V1_STR}/spaces",
     tags=["Analytics"]
 )
 app.include_router(
     insights_router,
     prefix=f"{settings.API_V1_STR}",
     tags=["Insights"]
+)
+
+app.include_router(
+    profile_router,
+    prefix=f"{settings.API_V1_STR}",
+    tags=["Profile"]
 )
 
 

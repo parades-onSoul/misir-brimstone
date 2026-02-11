@@ -10,6 +10,18 @@
  * Uses the same Supabase project as frontend + backend:
  *   https://vnnhmqrxrcnmcumcorta.supabase.co
  */
+
+// Guard against window not being defined (service worker context)
+if (typeof window === 'undefined') {
+  // @ts-ignore
+  globalThis.window = {
+    location: { href: '', hostname: 'chrome-extension', origin: 'chrome-extension://' } as any,
+    addEventListener: () => { },
+    removeEventListener: () => { },
+    localStorage: { getItem: () => null, setItem: () => { }, removeItem: () => { }, clear: () => { } } as any,
+  } as any;
+}
+
 import { createClient, type SupabaseClient, type Session, type User } from '@supabase/supabase-js';
 import type { AuthState } from '@/types';
 import { EMPTY_AUTH } from '@/types';
@@ -163,7 +175,7 @@ export async function getAuthState(): Promise<AuthState> {
   } catch (err) {
     console.error('[Misir Auth] Failed to get auth state:', err);
     // On any error, clear session and return empty auth
-    await clearSession().catch(() => {});
+    await clearSession().catch(() => { });
     return EMPTY_AUTH;
   }
 }
@@ -199,7 +211,7 @@ export async function refreshSession(): Promise<AuthState | null> {
     };
   } catch (err) {
     console.error('[Misir Auth] Refresh session failed:', err);
-    await clearSession().catch(() => {});
+    await clearSession().catch(() => { });
     return null;
   }
 }
@@ -238,7 +250,7 @@ export async function fetchSpacesFromSupabase(): Promise<import('@/types').Space
     }
 
     const supabase = getClient();
-    
+
     // Set the session for this request
     await supabase.auth.setSession({
       access_token: state.accessToken!,
@@ -273,7 +285,7 @@ export async function fetchSubspacesFromSupabase(
     }
 
     const supabase = getClient();
-    
+
     await supabase.auth.setSession({
       access_token: state.accessToken!,
       refresh_token: '',
@@ -307,7 +319,7 @@ export async function fetchMarkersFromSupabase(
     }
 
     const supabase = getClient();
-    
+
     await supabase.auth.setSession({
       access_token: state.accessToken!,
       refresh_token: '',

@@ -3,8 +3,15 @@
   "name": "Misir Sensor",
   "version": "0.2.0",
   "description": "Intelligent web content sensor with NLP classification for cognitive spaces",
-  "permissions": ["activeTab", "storage", "scripting", "alarms"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "action": {
     "default_popup": "src/popup/index.html",
     "default_icon": {
@@ -14,13 +21,17 @@
     }
   },
   "background": {
-    "service_worker": "src/background/index.ts",
+    "service_worker": "src/background/worker.ts",
     "type": "module"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["src/content/index.ts"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/content/index.ts"
+      ],
       "run_at": "document_idle"
     }
   ],

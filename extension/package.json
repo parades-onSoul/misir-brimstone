@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node scripts/patch-service-worker.js",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -21,7 +21,7 @@
     "wink-nlp": "^2.4.0"
   },
   "devDependencies": {
-    "@crxjs/vite-plugin": "^2.0.0-beta.21",
+    "@crxjs/vite-plugin": "^2.3.0",
     "@types/chrome": "^0.0.254",
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
@@ -30,6 +30,7 @@
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.3",
-    "vite": "^5.0.8"
+    "undici": "^5.28.4",
+    "vite": "^4.5.0"
   }
 }

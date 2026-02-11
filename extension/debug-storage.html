@@ -38,30 +38,12 @@
 <body>
   <h1>Misir Extension Storage Debugger</h1>
   <div>
-    <button onclick="loadStorage()">Load Storage</button>
-    <button onclick="clearAuth()" class="danger">Clear Auth</button>
-    <button onclick="clearAll()" class="danger">Clear All Storage</button>
+    <button id="load-storage">Load Storage</button>
+    <button id="clear-auth" class="danger">Clear Auth</button>
+    <button id="clear-all" class="danger">Clear All Storage</button>
   </div>
   <pre id="output">Click "Load Storage" to see contents...</pre>
 
-  <script>
-    async function loadStorage() {
-      const all = await chrome.storage.local.get(null);
-      document.getElementById('output').textContent = JSON.stringify(all, null, 2);
-    }
-
-    async function clearAuth() {
-      await chrome.storage.local.remove(['misir_session', 'userId']);
-      document.getElementById('output').textContent = 'Auth cleared. Click Load Storage to verify.';
-    }
-
-    async function clearAll() {
-      await chrome.storage.local.clear();
-      document.getElementById('output').textContent = 'All storage cleared. Extension will reinitialize on next load.';
-    }
-
-    // Auto-load on page load
-    loadStorage();
-  </script>
+  <script src="debug-storage.js"></script>
 </body>
 </html>

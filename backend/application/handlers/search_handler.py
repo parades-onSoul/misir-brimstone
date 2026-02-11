@@ -53,6 +53,8 @@ class SearchResult:
     content_preview: Optional[str]
     space_id: int
     subspace_id: Optional[int]
+    engagement_level: str
+    dwell_time_ms: int
 
 
 @dataclass
@@ -145,7 +147,9 @@ class SearchHandler:
                 url=row['url'],
                 content_preview=row.get('content_preview'),
                 space_id=row['space_id'],
-                subspace_id=row.get('subspace_id')
+                subspace_id=row.get('subspace_id'),
+                engagement_level=row['engagement_level'],
+                dwell_time_ms=row['dwell_time_ms']
             )
             for row in data
         ]

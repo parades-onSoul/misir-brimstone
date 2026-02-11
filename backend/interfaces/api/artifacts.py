@@ -2,13 +2,15 @@
 Artifact API — CRUD operations.
 
 Endpoints:
+- GET /artifacts — List artifacts (recent)
 - DELETE /artifacts/{id}
 - PATCH /artifacts/{id}
 """
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Query
 from fastapi_problem.error import Problem
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
+from datetime import datetime
 
 from supabase import Client
 from core.limiter import limiter
@@ -28,11 +30,41 @@ class UpdateArtifactRequest(BaseModel):
     engagement_level: Optional[str] = None
     reading_depth: Optional[float] = None
 
+class ArtifactResponse(BaseModel):
+    id: int
+    title: Optional[str]
+    url: str
+    domain: Optional[str]
+    created_at: datetime
+    captured_at: Optional[datetime]
+    engagement_level: str
+    subspace_id: Optional[int]
+    space_id: int
+
 
 def get_artifact_handler(client: Client = Depends(get_supabase_client)) -> ArtifactHandler:
     """Dependency for ArtifactHandler."""
     repo = ArtifactRepository(client)
     return ArtifactHandler(repo)
+
+@router.get("", response_model=List[ArtifactResponse])
+@limiter.limit("50/minute")
+async def list_artifacts(
+    request: Request,
+    user_id: str,
+    limit: int = Query(50, ge=1, le=100),
+    client: Client = Depends(get_supabase_client)
+):
+    """
+    List recent artifacts across all spaces.
+    """
+    repo = ArtifactRepository(client)
+    result = await repo.get_all_by_user(user_id, limit)
+    
+    if result.is_err():
+        return create_problem_response(result.unwrap_err())
+        
+    return result.unwrap()
 
 
 @router.patch("/{artifact_id}", response_model=dict)

@@ -1,7 +1,6 @@
 'use client';
 
-import { motion } from 'framer-motion';
-import { Lightbulb, ArrowRight, AlertTriangle, CheckCircle, Info, RefreshCw } from 'lucide-react';
+import { Lightbulb, ArrowRight, AlertTriangle, Info, RefreshCw } from 'lucide-react';
 import { useInsights, useGenerateInsights } from '@/lib/api/insights';
 import { useAuth } from '@/hooks/use-auth';
 import type { Insight } from '@/types/api';
@@ -69,13 +68,13 @@ export function InsightsList() {
                 </button>
              </div>
              
-             <div className="divide-y divide-white/[0.02]">
+             <div className="divide-y divide-white/2">
                  {insights.map((insight: Insight) => {
                      const style = severityConfig[insight.severity as keyof typeof severityConfig] || severityConfig.medium;
                      const Icon = style.icon;
                      
                      return (
-                        <div key={insight.id} className="p-4 hover:bg-white/[0.02] transition-colors cursor-pointer group">
+                        <div key={insight.id} className="p-4 hover:bg-white/2 transition-colors cursor-pointer group">
                              <div className="flex gap-3">
                                  <div className={`size-8 rounded-full flex items-center justify-center shrink-0 ${style.bg} ${style.color}`}>
                                      <Icon size={14} strokeWidth={2} />

@@ -31,12 +31,12 @@ import { useUIStore } from "@/lib/stores/ui";
 // --- Sub-Components ---
 
 const SidebarHeader = () => (
-  <div className="h-12 flex items-center px-4 mb-2 border-b border-white/5">
-    <div className="flex items-center gap-2.5 text-[#EEEEF0]">
+  <div className="h-12 flex items-center px-4 mb-2 border-b border-sidebar-border">
+    <div className="flex items-center gap-2.5 text-sidebar-foreground">
       {/* Brand Icon (Static, with glow) */}
-      <div className="size-5 bg-[#5E6AD2] rounded flex items-center justify-center shadow-[0_0_10px_rgba(94,106,210,0.4)]">
+      <div className="size-5 bg-primary rounded flex items-center justify-center shadow-[0_0_10px_rgba(94,106,210,0.4)]">
         <svg
-          className="w-3 h-3 text-white"
+          className="w-3 h-3 text-primary-foreground"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -69,15 +69,15 @@ const SidebarAction = ({
 }: SidebarActionProps) => (
   <button
     onClick={onClick}
-    className="flex items-center gap-2.5 px-3 h-8 w-full text-left rounded-md text-[#8A8F98] hover:bg-white/[0.04] hover:text-[#EEEEF0] transition-colors group"
+    className="flex items-center gap-2.5 px-3 h-8 w-full text-left rounded-md text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors group"
   >
     <Icon
-      className="size-[15px] opacity-70 group-hover:opacity-100"
+      className="size-3.75 opacity-70 group-hover:opacity-100"
       strokeWidth={1.5}
     />
     <span className="text-[13px] font-medium flex-1">{label}</span>
     {shortcut && (
-      <kbd className="text-[10px] text-[#5F646D] font-mono border border-white/10 px-1 rounded bg-white/[0.02]">
+      <kbd className="text-[10px] text-muted-foreground font-mono border border-border/20 px-1 rounded bg-muted/20">
         {shortcut}
       </kbd>
     )}
@@ -91,13 +91,13 @@ interface SectionHeaderProps {
 
 const SectionHeader = ({ label, onAdd }: SectionHeaderProps) => (
   <div className="flex items-center justify-between mt-6 mb-1 px-3 group">
-    <span className="text-[11px] font-medium text-[#5F646D] uppercase tracking-wider">
+    <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
       {label}
     </span>
     {onAdd && (
       <button
         onClick={onAdd}
-        className="text-[#5F646D] hover:text-[#EEEEF0] opacity-0 group-hover:opacity-100 transition-opacity"
+        className="text-muted-foreground hover:text-sidebar-foreground opacity-0 group-hover:opacity-100 transition-opacity"
       >
         <PlusSquare className="size-3" strokeWidth={1.5} />
       </button>
@@ -118,14 +118,14 @@ const NavItem = ({ icon: Icon, label, href, active }: NavItemProps) => (
     className={cn(
       "flex items-center gap-2.5 px-3 h-7 rounded-md transition-all duration-150",
       active
-        ? "text-[#EEEEF0] bg-white/[0.06]"
-        : "text-[#8A8F98] hover:bg-white/[0.04] hover:text-[#EEEEF0]"
+        ? "text-sidebar-accent-foreground bg-sidebar-accent"
+        : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
     )}
   >
     <Icon
       className={cn(
-        "size-[15px]",
-        active ? "text-[#5E6AD2]" : "text-[#5F646D]"
+        "size-3.75",
+        active ? "text-primary" : "text-muted-foreground"
       )}
       strokeWidth={1.5}
     />
@@ -146,7 +146,7 @@ export const AppSidebar = () => {
   const isActive = (path: string) => pathname === path;
 
   return (
-    <aside className="w-[260px] h-screen flex flex-col bg-[#0B0C0E]/95 backdrop-blur-xl border-r border-white/5">
+    <aside className="w-65 h-screen flex flex-col bg-sidebar/95 backdrop-blur-xl border-r border-sidebar-border">
       {/* 1. Static Header */}
       <SidebarHeader />
 
@@ -193,7 +193,7 @@ export const AppSidebar = () => {
         />
         <div className="space-y-0.5">
           {isLoading ? (
-            <div className="px-3 py-2 text-[13px] text-[#5F646D] flex items-center gap-2">
+            <div className="px-3 py-2 text-[13px] text-muted-foreground flex items-center gap-2">
               <Loader2 className="size-3 animate-spin" />
               <span>Loading spaces...</span>
             </div>
@@ -224,9 +224,9 @@ export const AppSidebar = () => {
       </div>
 
       {/* 5. Footer: User Profile */}
-      <div className="h-[52px] border-t border-white/5 flex items-center px-4 hover:bg-white/[0.02] cursor-pointer transition-colors">
-        <div className="size-6 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 border border-white/10 mr-2.5" />
-        <span className="text-[13px] font-medium text-[#EEEEF0] truncate max-w-[140px]">
+      <div className="h-13 border-t border-white/5 flex items-center px-4 hover:bg-white/2 cursor-pointer transition-colors">
+        <div className="size-6 rounded-full bg-linear-to-br from-purple-500 to-indigo-600 border border-white/10 mr-2.5" />
+        <span className="text-[13px] font-medium text-[#EEEEF0] truncate max-w-35">
           {user?.user_metadata?.full_name || user?.email || 'User'}
         </span>
         <Settings

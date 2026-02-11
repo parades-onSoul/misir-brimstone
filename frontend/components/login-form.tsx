@@ -24,7 +24,6 @@ import { Input } from "@/components/ui/input"
 
 export function LoginForm({
   className,
-  ...props
 }: React.ComponentProps<"div">) {
   const router = useRouter();
   const { signIn } = useAuth();
@@ -45,7 +44,7 @@ export function LoginForm({
       } else {
         router.push('/dashboard');
       }
-    } catch (err) {
+    } catch {
       setError('An unexpected error occurred');
     } finally {
       setIsLoading(false);
@@ -60,7 +59,7 @@ export function LoginForm({
       className={cn("flex flex-col gap-6", className)}
     >
       <Card className="border-border/40 shadow-2xl">
-        <CardHeader className="text-center space-y-3 pb-8 border-b border-border/40 bg-gradient-to-b from-secondary/30 to-secondary/10">
+        <CardHeader className="text-center space-y-3 pb-8 border-b border-border/40 bg-linear-to-b from-secondary/30 to-secondary/10">
           <motion.div
             initial={{ scale: 0.9 }}
             animate={{ scale: 1 }}
@@ -95,7 +94,7 @@ export function LoginForm({
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   autoFocus
-                  className="notion-input h-11 text-[15px] px-4"
+                  className="h-11 px-4 bg-muted/30 border-border text-[13px] text-foreground placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-colors"
                 />
               </Field>
               <Field className="space-y-2.5">
@@ -107,11 +106,11 @@ export function LoginForm({
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  className="notion-input h-11 text-[15px] px-4"
+                  className="h-11 px-4 bg-muted/30 border-border text-[13px] text-foreground placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-primary focus-visible:border-primary transition-colors"
                 />
               </Field>
               <Field className="pt-2">
-                <Button type="submit" disabled={isLoading} className="notion-button-primary w-full h-11 text-[15px] font-medium shadow-md hover:shadow-lg transition-all">
+                <Button type="submit" disabled={isLoading} className="w-full h-11 mt-2 text-[13px] font-medium transition-colors shadow-md hover:shadow-lg">
                   {isLoading ? (
                     <motion.span
                       initial={{ opacity: 0 }}

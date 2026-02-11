@@ -33,3 +33,13 @@ class SubspaceDrift:
     new_centroid: List[float]
     trigger_signal_id: int
     occurred_at: datetime = field(default_factory=datetime.utcnow)
+
+
+@dataclass
+class SubspaceConfidence:
+    """
+    Represents the confidence history of a subspace.
+    """
+    subspace_id: int
+    confidence: float
+    computed_at: datetime = field(default_factory=datetime.utcnow)

@@ -226,7 +226,7 @@ export function SpaceVisualization({
                 const count = levelArtifacts.length;
                 if (count === 0) return;
 
-                levelArtifacts.forEach((artifact, idx) => {
+                levelArtifacts.forEach((artifact) => {
                     const goldenAngle = Math.PI * (3 - Math.sqrt(5));
                     const angle = globalIndex * goldenAngle;
                     const normalizedIdx = globalIndex / Math.max(artifacts.length - 1, 1);

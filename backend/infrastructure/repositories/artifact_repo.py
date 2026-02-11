@@ -212,6 +212,38 @@ class ArtifactRepository:
                 user_id=user_id
             ))
 
+    async def get_timeline_by_space(
+        self,
+        user_id: str,
+        space_id: int
+    ) -> Result[list[dict], ErrorDetail]:
+        """Get minimal artifact data for timeline view (chronological order).
+        
+        Returns:
+            Result[list[dict], ErrorDetail]: List of artifacts or error
+        """
+        try:
+            response = (
+                self._client.schema('misir')
+                .from_('artifact')
+                .select('id, title, url, domain, created_at, engagement_level, subspace_id')
+                .eq('user_id', user_id)
+                .eq('space_id', space_id)
+                .is_('deleted_at', 'null')
+                .order('created_at', desc=False) # Oldest first
+                .execute()
+            )
+            return Ok(response.data or [])
+            
+        except Exception as e:
+            logger.error(f"get_timeline_by_space failed: {e}", exc_info=e)
+            return Err(repository_error(
+                f"Failed to get timeline: {str(e)}",
+                operation="get_timeline_by_space",
+                space_id=space_id,
+                user_id=user_id
+            ))
+
     async def delete_artifact(self, artifact_id: int, user_id: str) -> Result[bool, ErrorDetail]:
         """
         Soft delete an artifact.
@@ -289,3 +321,181 @@ class ArtifactRepository:
                 artifact_id=cmd.artifact_id,
                 user_id=cmd.user_id
             ))
+
+    async def get_all_by_user(self, user_id: str, limit: int = 50) -> Result[list[dict], ErrorDetail]:
+        """Get all artifacts for a user (most recent first)."""
+        try:
+            response = (
+                self._client.schema('misir')
+                .from_('artifact')
+                .select('id, title, url, domain, created_at, captured_at, engagement_level, subspace_id, space_id')
+                .eq('user_id', user_id)
+                .is_('deleted_at', 'null')
+                .order('created_at', desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return Ok(response.data or [])
+        except Exception as e:
+            logger.error(f"get_all_by_user failed: {e}", exc_info=e)
+            return Err(repository_error(
+                f"Failed to get artifacts: {str(e)}",
+                operation="get_all_by_user",
+                user_id=user_id
+            ))
+
+    async def get_all_by_user_id(self, user_id: str) -> list[dict]:
+        """
+        Get all artifacts for a user, including embedding.
+        Used for heavy analytics.
+        """
+        try:
+            # This could be a very large query. Use with caution.
+            response = self._client.schema('misir').from_("artifact").select("*").eq("user_id", user_id).is_("deleted_at", "null").execute()
+            return response.data or []
+        except Exception as e:
+            logger.error(f"get_all_by_user_id failed: {e}", exc_info=e)
+            return []
+
+    async def get_weak_artifacts_for_user(self, user_id: str, limit: int = 5) -> list[dict]:
+        """
+        Get artifacts with the lowest positive margin for a user across all spaces.
+        These are items the system was least confident about assigning.
+        """
+        try:
+            # We need to join artifact with signal (for margin) and space (for name)
+            # PostgREST allows embedding and filtering on related tables.
+            # We select artifact columns, and embed the space name and signal margin.
+            # Note: Can't order by nested signal.margin directly in PostgREST, so we'll sort in Python
+            response = self._client.schema('misir').from_("artifact").select(
+                "id, title, created_at, signal(margin), space:space_id(name)"
+            ).eq("user_id", user_id).limit(limit * 3).execute()  # Fetch more, filter and sort in Python
+
+            # The result is slightly nested, so we need to flatten it for the endpoint.
+            # E.g., {'id': 1, 'title': 'Test', 'signal': {'margin': 0.5}, 'space': {'name': 'My Space'}}
+            # We'll transform it into a more usable structure.
+            
+            flat_data = []
+            for item in response.data or []:
+                signal = item.get("signal") or {}
+                margin = signal.get("margin") if isinstance(signal, dict) else None
+                if margin is not None:  # Only include artifacts with margin
+                    flat_item = {
+                        "id": item.get("id"),
+                        "title": item.get("title"),
+                        "created_at": item.get("created_at"),
+                        "margin": margin,
+                        "space_name": item.get("space", {}).get("name") if item.get("space") else "Unknown"
+                    }
+                    flat_data.append(flat_item)
+            
+            # Sort by margin ascending (lowest first) and take limit
+            flat_data.sort(key=lambda x: x["margin"])
+            return flat_data[:limit]
+
+        except Exception as e:
+            logger.error(f"get_weak_artifacts_for_user failed: {e}", exc_info=e)
+            return []
+
+    async def get_paginated(
+        self,
+        user_id: str,
+        space_id: int,
+        page: int = 1,
+        limit: int = 50,
+        subspace_id: Optional[int] = None,
+        engagement_level: Optional[str] = None,
+        min_margin: Optional[float] = None,
+        sort: str = "recent"
+    ) -> Result[dict, ErrorDetail]:
+        """
+        Get paginated artifacts with filters.
+        
+        Returns:
+            Result[dict, ErrorDetail]: Dictionary with 'items' and 'pagination' keys.
+        """
+        try:
+            offset = (page - 1) * limit
+            
+            # Base query with exact count
+            # We select artifact fields, related signal margin, and subspace name
+            query = self._client.schema('misir').from_('artifact').select(
+                '*, signal(margin), subspace(name)', count='exact'
+            )
+            
+            # Base filters
+            query = query.eq('user_id', user_id).eq('space_id', space_id).is_('deleted_at', 'null')
+            
+            # Optional filters
+            if subspace_id:
+                query = query.eq('subspace_id', subspace_id)
+            
+            if engagement_level:
+                query = query.eq('engagement_level', engagement_level)
+            
+            # Margin filtering
+            # Note: This relies on PostgREST's ability to filter on embedded resources
+            # syntax: embedded_resource.column
+            if min_margin is not None:
+                # We need to ensure we join signal innerly if we are filtering on it?
+                # For now we use the filter syntax.
+                # If signal is missing, margin is null, so it shouldn't match gte.
+                query = query.filter('signal.margin', 'gte', min_margin)
+            
+            # Sorting
+            if sort == "recent":
+                query = query.order('captured_at', desc=True)
+            elif sort == "oldest":
+                query = query.order('captured_at', desc=False)
+            elif sort == "margin_desc":
+                # Order by related column
+                # Syntax might vary by client version, but generally resource(col)
+                # If this fails, we might need a stored procedure or just python sorting (bad for pagination)
+                # Let's try the standard PostgREST syntax
+                query = query.order('signal(margin)', desc=True, nullsfirst=False)
+            elif sort == "margin_asc":
+                query = query.order('signal(margin)', desc=False, nullsfirst=False)
+            
+            # Pagination
+            query = query.range(offset, offset + limit - 1)
+            
+            # Execute
+            # Note: run_in_executor might be needed if this is blocking? 
+            # The client usually doesn't expose async execute directly unless used with await?
+            # The other methods here use run_in_executor for atomic safety or just direct calls.
+            # Other methods in this file use execute() directly without await if it's sync client wrapped?
+            # Wait, the __init__ takes `client: Client`. Is it sync or async?
+            # Looking at `ingest_with_signal`, it uses `loop.run_in_executor`.
+            # Looking at `search_by_space`, it calls `.execute()` directly. 
+            # This implies `self._client` is likely the sync client from `supabase` package.
+            # So `.execute()` is blocking.
+            # `search_by_space` is defined `async` but calls synchronous `.execute()`. 
+            # This blocks the event loop! `ingest_with_signal` does it correctly.
+            # I should follow `ingest_with_signal` pattern or fix `search_by_space` later.
+            # For now, to correspond with `search_by_space` style (which seems accepted here), I'll do direct execute.
+            # Ideally I should wrap in executor.
+            
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(None, query.execute)
+            
+            total = response.count if response.count is not None else 0
+            
+            return Ok({
+                "items": response.data or [],
+                "pagination": {
+                    "page": page,
+                    "limit": limit,
+                    "total": total,
+                    "total_pages": (total + limit - 1) // limit if limit > 0 else 0
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"get_paginated failed: {e}", exc_info=e)
+            return Err(repository_error(
+                f"Failed to get paginated artifacts: {str(e)}",
+                operation="get_paginated",
+                space_id=space_id
+            ))
+
+

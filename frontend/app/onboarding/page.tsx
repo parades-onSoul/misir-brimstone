@@ -63,7 +63,7 @@ export default function OnboardingPage() {
     };
 
     return (
-        <div className="flex min-h-screen items-center justify-center p-6 bg-gradient-to-b from-background to-background/80">
+        <div className="flex min-h-screen items-center justify-center p-6 bg-linear-to-b from-background to-background/80">
             <AnimatePresence mode="wait">
                 {step === 0 && (
                     <motion.div

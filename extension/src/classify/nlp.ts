@@ -12,6 +12,11 @@ let nlpInstance: any = null;
 let nlpAvailable = false;
 let initPromise: Promise<void> | null = null;
 
+function isServiceWorkerContext(): boolean {
+  const swGlobal = (globalThis as any).ServiceWorkerGlobalScope;
+  return typeof swGlobal !== 'undefined' && globalThis instanceof swGlobal;
+}
+
 // ── Lazy init ────────────────────────────────────────
 
 async function ensureNLP(): Promise<boolean> {
@@ -23,8 +28,8 @@ async function ensureNLP(): Promise<boolean> {
 
   initPromise = (async () => {
     try {
-      // Check if we're in a service worker context (no document)
-      if (typeof document === 'undefined') {
+      // Avoid loading wink-nlp in the service worker
+      if (isServiceWorkerContext()) {
         console.log('[Misir NLP] Service worker context detected, using fallback');
         nlpAvailable = false;
         return;

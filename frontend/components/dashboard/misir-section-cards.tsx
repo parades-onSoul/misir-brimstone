@@ -64,9 +64,9 @@ export function MisirSectionCards({ spaces, isLoading }: MisirSectionCardsProps)
         status="Active"
       />
       <MetricCard 
-        label="Artifacts" 
+        label="Items" 
         value={totalArtifacts} 
-        subtext="Content pieces indexed"
+        subtext="Resources saved"
         status="+12%"
       />
       <MetricCard 
@@ -76,9 +76,9 @@ export function MisirSectionCards({ spaces, isLoading }: MisirSectionCardsProps)
         status="Stable"
       />
       <MetricCard 
-        label="Drift" 
+        label="Focus Spread" 
         value={`${driftScore}%`} 
-        subtext="Attention spread"
+        subtext="How focused you are"
         status="Safe"
       />
     </div>

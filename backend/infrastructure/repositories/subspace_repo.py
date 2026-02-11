@@ -13,7 +13,7 @@ from typing import Optional
 from result import Result, Ok, Err
 from core.config import get_settings
 from supabase import Client
-from domain.entities.analytics import SubspaceVelocity, SubspaceDrift
+from domain.entities.analytics import SubspaceVelocity, SubspaceDrift, SubspaceConfidence
 from core.error_types import (
     ErrorDetail,
     repository_error,
@@ -801,4 +801,32 @@ class SubspaceRepository:
             ]
         except Exception as e:
             logger.error(f"Failed to get drift history: {e}")
+            return []
+
+    async def get_confidence_history(
+        self,
+        subspace_id: int,
+        limit: int = 50
+    ) -> list[SubspaceConfidence]:
+        """Get confidence history."""
+        try:
+            response = (
+                self._client.schema('misir')
+                .from_('subspace_centroid_history')
+                .select('subspace_id, confidence, computed_at')
+                .eq('subspace_id', subspace_id)
+                .order('computed_at', desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return [
+                SubspaceConfidence(
+                    subspace_id=row['subspace_id'],
+                    confidence=row['confidence'],
+                    computed_at=datetime.fromisoformat(row['computed_at'])
+                )
+                for row in (response.data or [])
+            ]
+        except Exception as e:
+            logger.error(f"Failed to get confidence history: {e}")
             return []

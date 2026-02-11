@@ -67,6 +67,20 @@ export interface DeleteSpaceResponse {
     deleted: boolean;
 }
 
+export interface TimelineArtifact {
+    id: number;
+    title: string | null;
+    url: string;
+    domain: string;
+    created_at: string;
+    engagement_level: string;
+    subspace_id: number | null;
+}
+
+export interface TimelineResponse {
+    artifacts: TimelineArtifact[];
+}
+
 // ============ Capture (matching backend/interfaces/api/capture.py) ============
 
 export interface CaptureRequest {
@@ -113,6 +127,8 @@ export interface SearchResultItem {
     content_preview: string | null;
     space_id: number;
     subspace_id: number | null;
+    engagement_level: EngagementLevel;
+    dwell_time_ms: number;
 }
 
 export interface SearchResponse {
@@ -129,22 +145,25 @@ export interface Artifact {
     user_id: string;
     space_id: number;
     url: string;
-    normalized_url: string;
-    domain: string;
     title: string | null;
-    content: string | null;
-    word_count: number;
+    domain: string;
     engagement_level: EngagementLevel;
-    content_source: SourceType;
-    dwell_time_ms: number;
-    scroll_depth: number;
-    reading_depth: number;
     subspace_id: number | null;
-    session_id: number | null;
+    margin: number | null;
+    dwell_time_ms: number;
     created_at: string;
-    updated_at: string;
-    captured_at: string | null;
-    deleted_at: string | null;
+    // Optional fields from full artifact view
+    normalized_url?: string;
+    content?: string | null;
+    word_count?: number;
+    content_source?: SourceType;
+    scroll_depth?: number;
+    reading_depth?: number;
+    session_id?: number | null;
+    updated_at?: string;
+    captured_at?: string | null;
+    deleted_at?: string | null;
+    reading_time_min?: number | null;
 }
 
 export interface UpdateArtifactRequest {
@@ -277,3 +296,176 @@ export interface AnalyticsResponse {
     activity_level: string; // High, Medium, Low
     subspace_health: SubspaceHealth[];
 }
+
+export interface TopologyNode {
+    subspace_id: number;
+    name: string;
+    artifact_count: number;
+    confidence: number;
+    x: number;
+    y: number;
+    updated_at?: string | null;
+    last_active_at?: string | null;
+    recent_artifact_count?: number | null;
+    activity_band?: 'low' | 'medium' | 'high';
+}
+
+export interface TopologySnapshot {
+    timestamp: string;
+    nodes: TopologyNode[];
+}
+
+export interface TopologyResponse {
+    nodes: TopologyNode[];
+    history?: TopologySnapshot[];
+    metadata?: {
+        last_updated?: string;
+        sampling_window_start?: string;
+        sampling_window_end?: string;
+    };
+}
+
+export interface DriftEvent {
+    id: number | null;
+    subspace_id: number;
+    subspace_name: string;
+    drift_magnitude: number;
+    occurred_at: string; 
+    trigger_signal_id: number | null;
+}
+
+export interface VelocityPoint {
+    subspace_id: number;
+    subspace_name: string;
+    velocity: number;
+    measured_at: string;
+}
+
+export interface ConfidencePoint {
+    subspace_id: number;
+    subspace_name: string;
+    confidence: number;
+    computed_at: string;
+}
+
+export interface MarginDistribution {
+    distribution: {
+        weak: number;
+        moderate: number;
+        strong: number;
+    };
+    total: number;
+}
+
+export interface SmartAlert {
+    type: string; // low_margin, high_drift, velocity_drop, confidence_drop
+    title: string;
+    message: string;
+    severity: string; // info, warning
+    trigger_value: number;
+}
+
+// ============ Alerts (matching backend/interfaces/api/spaces.py) ============
+
+export interface AlertAction {
+    label: string;
+    action: string;
+    target?: string;
+}
+
+export interface SpaceAlert {
+    id: string;
+    type: string; // low_margin, high_drift, velocity_drop, confidence_drop
+    severity: string; // info, warning, danger
+    title: string;
+    message: string;
+    affected_artifacts: number[];
+    suggested_actions: AlertAction[];
+    space_id: number;
+}
+
+export interface SpaceAlertsResponse {
+    alerts: SpaceAlert[];
+    count: number;
+}
+
+
+
+// ============ Analytics Types ============
+
+export interface OverviewMetrics {
+    total_artifacts: number;
+    active_spaces: number;
+    overall_focus: number; // 0.0 to 1.0
+    system_health: string;
+}
+
+export interface TimeAllocationItem {
+    space_id: number;
+    space_name: string;
+    space_color: string;
+    minutes: number;
+    percentage: number;
+}
+
+export interface HeatmapItem {
+    date: string;
+    count: number;
+}
+
+export interface WeaknessItem {
+    id: number;
+    title: string;
+    space_name: string;
+    margin: number;
+    created_at: string;
+}
+
+export interface PaceItem {
+    space_name: string;
+    count: number;
+    trend: string;
+}
+
+export interface GlobalAnalyticsResult {
+    overview: OverviewMetrics;
+    time_allocation: TimeAllocationItem[];
+    activity_heatmap: HeatmapItem[];
+    weak_items: WeaknessItem[];
+    pace_by_space: PaceItem[];
+}
+
+// ============ Profile (matching backend/interfaces/api/profile.py) ============
+
+export interface ProfileResponse {
+    id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+    timezone: string;
+    onboarding_completed: boolean;
+    onboarded_at: string | null;
+    settings: Record<string, any>;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface UpdateSettingsRequest {
+    settings: Record<string, any>;
+}
+
+export interface UpdateProfileRequest {
+    display_name?: string;
+    avatar_url?: string;
+    timezone?: string;
+}
+
+// Common settings structure
+export interface UserSettings {
+    theme?: 'light' | 'dark' | 'auto';
+    density?: 'comfortable' | 'compact' | 'cozy';
+    notifications_enabled?: boolean;
+    retention_days?: number;
+}
+
+
+

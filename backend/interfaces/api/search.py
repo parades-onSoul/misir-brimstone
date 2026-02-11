@@ -30,6 +30,8 @@ class SearchResultItem(BaseModel):
     content_preview: Optional[str]
     space_id: int
     subspace_id: Optional[int]
+    engagement_level: str
+    dwell_time_ms: int
 
 
 class SearchResponseModel(BaseModel):
@@ -139,7 +141,9 @@ async def search(
                 url=r.url,
                 content_preview=r.content_preview,
                 space_id=r.space_id,
-                subspace_id=r.subspace_id
+                subspace_id=r.subspace_id,
+                engagement_level=r.engagement_level,
+                dwell_time_ms=r.dwell_time_ms
             )
             for r in response.results
         ],

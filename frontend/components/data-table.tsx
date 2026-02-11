@@ -365,6 +365,8 @@ export function DataTable({
     [data]
   )
 
+  // The TanStack Table hook intentionally returns unstable callbacks; safe to bypass React Compiler warning here.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
     data,
     columns,

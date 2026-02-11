@@ -1,219 +1,155 @@
-"use client"
+'use client';
 
-import Link from "next/link"
-import { usePathname, useSearchParams } from "next/navigation"
-import {
-  FileText,
-  Layers,
-  Plus,
-  ChevronRight,
-  Sparkles,
-} from "lucide-react"
-
+import { Home, Layers, TrendingUp, Search, Settings, ChevronRight } from 'lucide-react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { useAuth } from '@/hooks/use-auth';
+import { useSpaces } from '@/lib/api/spaces';
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
-  SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
-  SidebarMenuSubButton,
   SidebarMenuSubItem,
-  SidebarRail,
-  useSidebar,
-} from "@/components/ui/sidebar"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
-import { useAuth } from "@/hooks/use-auth"
-import { useUIStore } from "@/lib/stores/ui"
-import { useSpaces } from "@/lib/api/spaces"
+  SidebarMenuSubButton,
+  SidebarFooter,
+} from '@/components/ui/sidebar';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { getSpaceColor } from '@/lib/colors';
+import { cn } from '@/lib/utils';
 
-const navItems = [
-  {
-    title: "Report",
-    url: "/dashboard/report",
-    icon: FileText,
-  },
-]
+export function AppSidebar() {
+  const pathname = usePathname();
+  const { user } = useAuth();
+  const { data: spacesData } = useSpaces(user?.id);
+  const spaces = spacesData?.spaces || [];
 
-export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const pathname = usePathname()
-  const searchParams = useSearchParams()
-  const { openCreateSpaceModal } = useUIStore()
-  const { user } = useAuth()
-  const { data, isLoading } = useSpaces(user?.id)
-  const spaces = data?.spaces ?? []
-  const { state } = useSidebar()
+  const mainNavItems = [
+    { title: 'Home', url: '/dashboard', icon: Home },
+    { title: 'Analytics', url: '/dashboard/analytics', icon: TrendingUp },
+    { title: 'Search', url: '/dashboard/search', icon: Search },
+    { title: 'Settings', url: '/dashboard/settings', icon: Settings },
+  ];
 
   return (
-    <Sidebar collapsible="icon" {...props} className="border-r border-border/40">
-      <SidebarHeader className="border-b border-border/40 px-3 py-3">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild className="notion-hover rounded-md">
-              <Link href="/dashboard">
-                <div className="flex aspect-square size-7 items-center justify-center rounded-md bg-gradient-to-br from-primary/90 to-primary text-primary-foreground">
-                  <Sparkles className="size-3.5" />
-                </div>
-                <div className={state === "collapsed" ? "sr-only" : "flex flex-col gap-0 leading-tight"}>
-                  <span className="font-semibold text-[15px]">Misir</span>
-                  <span className="text-[11px] text-muted-foreground">Orientation System</span>
-                </div>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+    <Sidebar className="border-r border-white/5 bg-[#0B0C0E]">
+      <SidebarHeader className="border-b border-white/5 h-14 px-4 flex items-center">
+        <Link href="/dashboard" className="flex items-center gap-2">
+          <div className="size-6 rounded bg-linear-to-br from-[#5E6AD2] to-[#7C4DFF] flex items-center justify-center">
+            <span className="text-white text-[12px] font-bold">M</span>
+          </div>
+          <span className="text-[15px] font-semibold text-[#EEEEF0]">Misir</span>
+        </Link>
       </SidebarHeader>
 
-      <SidebarContent className="px-2 py-2">
+      <SidebarContent>
+        {/* Main Navigation */}
         <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  onClick={openCreateSpaceModal}
-                  className="notion-hover text-foreground font-medium h-8"
-                  tooltip="Create new space"
-                  size={state === "collapsed" ? "sm" : "default"}
-                >
-                  <div className="flex items-center justify-center size-5 rounded bg-primary/10 text-primary">
-                    <Plus className="!size-3.5" />
-                  </div>
-                  <span className={state === "collapsed" ? "sr-only" : "text-sm"}>New Space</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup className="mt-1">
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {navItems.map((item) => {
-                const isActive = pathname.startsWith(item.url)
-                return (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={isActive}
-                      tooltip={item.title}
-                      size={state === "collapsed" ? "sm" : "default"}
-                      className={`notion-hover h-8 ${isActive ? 'bg-muted text-foreground' : 'text-muted-foreground'}`}
-                    >
-                      <Link href={item.url}>
-                        <item.icon className="!size-4" />
-                        <span className={state === "collapsed" ? "sr-only" : "text-sm"}>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                )
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup className="mt-4">
-          <SidebarGroupLabel className={state === "collapsed" ? "sr-only" : "text-[11px] font-medium text-muted-foreground px-2 py-1"}>
-            Spaces
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {isLoading ? (
-                <SidebarMenuItem>
-                  <SidebarMenuButton size={state === "collapsed" ? "sm" : "default"} disabled className="h-8">
-                    <span className={state === "collapsed" ? "sr-only" : "text-xs text-muted-foreground"}>Loading...</span>
+          <SidebarMenu>
+            {mainNavItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = pathname === item.url;
+              
+              return (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isActive}
+                    className={cn(
+                      "text-[14px] hover:bg-white/5 transition-colors",
+                      isActive && "bg-white/8 text-[#EEEEF0] font-medium"
+                    )}
+                  >
+                    <Link href={item.url}>
+                      <Icon className="size-4" />
+                      <span>{item.title}</span>
+                    </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-              ) : spaces.length === 0 ? (
-                <SidebarMenuItem>
-                  <SidebarMenuButton size={state === "collapsed" ? "sm" : "default"} disabled className="h-8">
-                    <span className={state === "collapsed" ? "sr-only" : "text-xs text-muted-foreground italic"}>No spaces yet</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ) : (
-                spaces.map((space) => {
-                  const basePath = `/dashboard/spaces/${space.id}`
-                  const isBase = pathname === basePath
-                  const tab = searchParams.get("tab")
-                  const isSpaceActive = pathname.startsWith(basePath)
-
-                  return (
-                    <Collapsible key={space.id} className="group/collapsible" defaultOpen={isSpaceActive}>
-                      <SidebarMenuItem>
-                        <CollapsibleTrigger asChild>
-                          <SidebarMenuButton 
-                            tooltip={space.name} 
-                            size={state === "collapsed" ? "sm" : "default"}
-                            className={`notion-hover h-8 ${isSpaceActive ? 'bg-muted/50 text-foreground font-medium' : 'text-muted-foreground'}`}
-                          >
-                            <Layers className="h-4 w-4" />
-                            <span className={state === "collapsed" ? "sr-only" : "truncate text-sm"}>{space.name}</span>
-                            <ChevronRight className="ml-auto h-3.5 w-3.5 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
-                          </SidebarMenuButton>
-                        </CollapsibleTrigger>
-                        <CollapsibleContent className="transition-all duration-200">
-                          <SidebarMenuSub className="ml-4 border-l border-border/40 pl-2 py-1">
-                            <SidebarMenuSubItem>
-                              <SidebarMenuSubButton
-                                asChild
-                                isActive={isBase && tab !== "artifacts"}
-                                className={`notion-hover h-7 text-[13px] ${isBase && tab !== "artifacts" ? 'text-foreground font-medium' : 'text-muted-foreground'}`}
-                              >
-                                <Link href={basePath}>
-                                  <span>Overview</span>
-                                </Link>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                            <SidebarMenuSubItem>
-                              <SidebarMenuSubButton
-                                asChild
-                                isActive={isBase && tab === "artifacts"}
-                                className={`notion-hover h-7 text-[13px] ${isBase && tab === "artifacts" ? 'text-foreground font-medium' : 'text-muted-foreground'}`}
-                              >
-                                <Link href={`${basePath}?tab=artifacts`}>
-                                  <span>Artifacts</span>
-                                </Link>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                            <SidebarMenuSubItem>
-                              <SidebarMenuSubButton
-                                asChild
-                                isActive={pathname === `${basePath}/configuration`}
-                                className={`notion-hover h-7 text-[13px] ${pathname === `${basePath}/configuration` ? 'text-foreground font-medium' : 'text-muted-foreground'}`}
-                              >
-                                <Link href={`${basePath}/configuration`}>
-                                  <span>Configuration</span>
-                                </Link>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          </SidebarMenuSub>
-                        </CollapsibleContent>
-                      </SidebarMenuItem>
-                    </Collapsible>
-                  )
-                })
-              )}
-            </SidebarMenu>
-          </SidebarGroupContent>
+              );
+            })}
+          </SidebarMenu>
         </SidebarGroup>
+
+        {/* Spaces Section */}
+        <Collapsible defaultOpen className="group/collapsible">
+          <SidebarGroup>
+            <SidebarGroupLabel asChild>
+              <CollapsibleTrigger className="text-[13px] text-[#8A8F98] hover:text-[#EEEEF0] transition-colors flex items-center justify-between w-full group-data-[state=open]/collapsible:text-[#EEEEF0]">
+                <div className="flex items-center gap-2">
+                  <Layers className="size-3.5" />
+                  <span>Spaces</span>
+                  <span className="text-[11px] text-[#5F646D]">({spaces.length})</span>
+                </div>
+                <ChevronRight className="size-3.5 transition-transform group-data-[state=open]/collapsible:rotate-90" />
+              </CollapsibleTrigger>
+            </SidebarGroupLabel>
+            <CollapsibleContent>
+              <SidebarMenuSub>
+                {spaces.length === 0 ? (
+                  <SidebarMenuSubItem>
+                    <div className="px-2 py-1.5 text-[12px] text-[#5F646D] italic">
+                      No spaces yet
+                    </div>
+                  </SidebarMenuSubItem>
+                ) : (
+                  spaces.map((space, idx) => {
+                    const color = getSpaceColor(idx);
+                    const isActive = pathname === `/spaces/${space.id}`;
+                    
+                    return (
+                      <SidebarMenuSubItem key={space.id}>
+                        <SidebarMenuSubButton
+                          asChild
+                          isActive={isActive}
+                          className={cn(
+                            "text-[13px] hover:bg-white/5 transition-colors",
+                            isActive && "bg-white/8 text-[#EEEEF0] font-medium"
+                          )}
+                        >
+                          <Link href={`/spaces/${space.id}`}>
+                            <div 
+                              className="size-2 rounded-full shrink-0"
+                              style={{ backgroundColor: color.hex }}
+                            />
+                            <span className="truncate">{space.name}</span>
+                            {space.artifact_count > 0 && (
+                              <span className="ml-auto text-[11px] text-[#5F646D]">
+                                {space.artifact_count}
+                              </span>
+                            )}
+                          </Link>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
+                    );
+                  })
+                )}
+              </SidebarMenuSub>
+            </CollapsibleContent>
+          </SidebarGroup>
+        </Collapsible>
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-border/40 px-3 py-2">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size={state === "collapsed" ? "sm" : "default"} className="notion-hover h-7">
-              <span className={state === "collapsed" ? "sr-only" : "text-[11px] text-muted-foreground"}>v1.0.0 • shiro.exe</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+      <SidebarFooter className="border-t border-white/5 p-4">
+        <div className="flex items-center gap-3">
+          <div className="size-8 rounded-full bg-linear-to-br from-[#5E6AD2] to-[#7C4DFF] flex items-center justify-center shrink-0">
+            <span className="text-white text-[13px] font-medium">
+              {user?.email?.[0]?.toUpperCase() || 'U'}
+            </span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[13px] text-[#EEEEF0] truncate">
+              {user?.email || 'User'}
+            </div>
+          </div>
+        </div>
       </SidebarFooter>
-
-      <SidebarRail />
     </Sidebar>
-  )
+  );
 }
 

@@ -13,6 +13,12 @@
  *   - Health checks
  *   - NLP status
  */
+
+// Guard against service worker context issues
+if (typeof window === 'undefined' || !window.addEventListener) {
+  console.log('[Misir] Service worker context detected, initializing safely');
+}
+
 import { classifyPage, buildPayload } from '@/classify/pipeline';
 import {
   fetchSpaces,
@@ -21,15 +27,20 @@ import {
   getConfig,
   setConfig,
 } from '@/api/client';
+
+// Lazy-load auth functions to avoid window access at module init time
+let authFunctions: any = null;
+async function getAuthFunctions() {
+  if (!authFunctions) {
+    authFunctions = await import('@/api/supabase');
+  }
+  return authFunctions;
+}
 import {
-  signIn,
-  signOut,
-  getAuthState,
-  refreshSession,
-  fetchSpacesFromSupabase,
-  fetchSubspacesFromSupabase,
-  fetchMarkersFromSupabase,
-} from '@/api/supabase';
+  addToQueue,
+  processQueue,
+  getQueue,
+} from '@/storage/queue';
 import type {
   ScrapedPage,
   ReadingMetrics,
@@ -37,6 +48,7 @@ import type {
   RecentCapture,
   SensorConfig,
   MessageResponse,
+  CapturePayload,
 } from '@/types';
 
 // ── Recent Captures (local storage) ──────────────────
@@ -55,7 +67,7 @@ async function addRecentCapture(capture: RecentCapture): Promise<void> {
 // ── Message Handler ──────────────────────────────────
 
 chrome.runtime.onMessage.addListener(
-  (msg: { type: string; [key: string]: any }, _sender, sendResponse) => {
+  (msg: { type: string;[key: string]: any }, _sender, sendResponse) => {
     const handler = async (): Promise<MessageResponse> => {
       try {
         switch (msg.type) {
@@ -89,27 +101,46 @@ chrome.runtime.onMessage.addListener(
             // 2. Build payload
             const payload = buildPayload(spaceId, page, metrics, classification);
 
-            // 3. Send to backend (backend handles Nomic 1.5 embedding)
-            const result = await captureArtifact(payload);
+            try {
+              // 3. Send to backend (backend handles Nomic 1.5 embedding)
+              const result = await captureArtifact(payload);
 
-            // 4. Store recent capture
-            await addRecentCapture({
-              url: page.url,
-              title: page.title,
-              domain: page.domain,
-              spaceId,
-              engagementLevel: classification.engagementLevel,
-              contentType: classification.contentType,
-              capturedAt: new Date().toISOString(),
-            });
+              // 4. Store recent capture
+              await addRecentCapture({
+                url: page.url,
+                title: page.title,
+                domain: page.domain,
+                spaceId,
+                engagementLevel: classification.engagementLevel,
+                contentType: classification.contentType,
+                capturedAt: new Date().toISOString(),
+              });
 
-            return {
-              success: true,
-              data: {
-                ...result,
-                classification,
-              },
-            };
+              return {
+                success: true,
+                data: {
+                  ...result,
+                  classification,
+                  queued: false,
+                },
+              };
+            } catch (error) {
+              // API call failed — add to offline queue for retry
+              const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+              const queueId = await addToQueue(payload, errorMsg);
+
+              console.warn('[Misir BG] Capture failed, added to queue:', queueId, errorMsg);
+
+              return {
+                success: false,
+                error: `Capture queued for retry: ${errorMsg}`,
+                data: {
+                  classification,
+                  queued: true,
+                  queueId,
+                },
+              };
+            }
           }
 
           // ── Health Check ───────────────
@@ -140,14 +171,32 @@ chrome.runtime.onMessage.addListener(
             return { success: true, data: cls };
           }
 
+          // ── Offline Queue Management ───
+          case 'GET_QUEUE': {
+            const queue = await getQueue();
+            return { success: true, data: queue };
+          }
+
+          case 'PROCESS_QUEUE': {
+            const result = await processQueue(captureArtifact);
+            return { success: true, data: result };
+          }
+
+          case 'CLEAR_QUEUE': {
+            const { clearQueue } = await import('@/storage/queue');
+            await clearQueue();
+            return { success: true };
+          }
+
           // ── Auth ───────────────────────
           case 'SIGN_IN': {
             try {
-              const auth = await signIn(
+              const auth = await getAuthFunctions();
+              const result = await auth.signIn(
                 msg.email as string,
                 msg.password as string
               );
-              return { success: true, data: auth };
+              return { success: true, data: result };
             } catch (err) {
               return {
                 success: false,
@@ -157,17 +206,20 @@ chrome.runtime.onMessage.addListener(
           }
 
           case 'SIGN_OUT': {
-            await signOut();
+            const auth = await getAuthFunctions();
+            await auth.signOut();
             return { success: true };
           }
 
           case 'GET_AUTH_STATE': {
-            const authState = await getAuthState();
+            const auth = await getAuthFunctions();
+            const authState = await auth.getAuthState();
             return { success: true, data: authState };
           }
 
           case 'REFRESH_SESSION': {
-            const refreshed = await refreshSession();
+            const auth = await getAuthFunctions();
+            const refreshed = await auth.refreshSession();
             return {
               success: !!refreshed,
               data: refreshed,
@@ -178,7 +230,8 @@ chrome.runtime.onMessage.addListener(
           // ── Supabase Data Fetching ─────
           case 'FETCH_SPACES_SUPABASE': {
             try {
-              const spaces = await fetchSpacesFromSupabase();
+              const auth = await getAuthFunctions();
+              const spaces = await auth.fetchSpacesFromSupabase();
               return { success: true, data: spaces };
             } catch (err) {
               return {
@@ -190,7 +243,8 @@ chrome.runtime.onMessage.addListener(
 
           case 'FETCH_SUBSPACES_SUPABASE': {
             try {
-              const subspaces = await fetchSubspacesFromSupabase(
+              const auth = await getAuthFunctions();
+              const subspaces = await auth.fetchSubspacesFromSupabase(
                 msg.spaceId as number
               );
               return { success: true, data: subspaces };
@@ -204,7 +258,8 @@ chrome.runtime.onMessage.addListener(
 
           case 'FETCH_MARKERS_SUPABASE': {
             try {
-              const markers = await fetchMarkersFromSupabase(
+              const auth = await getAuthFunctions();
+              const markers = await auth.fetchMarkersFromSupabase(
                 msg.spaceId as number
               );
               return { success: true, data: markers };
@@ -248,6 +303,34 @@ chrome.runtime.onInstalled.addListener((details) => {
       recentCaptures: [],
     });
   }
+  // Attempt to process any queued captures after install/update
+  processQueueIfOnline('onInstalled').catch(() => {});
+});
+
+// ── Offline Queue Processing (MV3-safe) ─────────────
+
+function isOnline(): boolean {
+  if (typeof navigator === 'undefined') return true;
+  return navigator.onLine !== false;
+}
+
+async function processQueueIfOnline(trigger: string): Promise<void> {
+  if (!isOnline()) {
+    console.log(`[Misir] Queue skipped (${trigger}): offline`);
+    return;
+  }
+  try {
+    const result = await processQueue(captureArtifact);
+    if (result.processed > 0) {
+      console.log('[Misir] Queue processed:', { trigger, ...result });
+    }
+  } catch (err) {
+    console.error('[Misir] Failed to process queue:', err);
+  }
+}
+
+chrome.runtime.onStartup.addListener(() => {
+  processQueueIfOnline('onStartup').catch(() => {});
 });
 
 // ── Pulse alarm (keep service worker alive) ──────────
@@ -258,9 +341,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'misir-pulse') {
     console.log('[Misir] Pulse ♥', new Date().toISOString());
     // Proactively refresh token if needed (silent fail)
-    refreshSession().catch((err) => {
-      console.warn('[Misir] Pulse refresh failed:', err);
+    getAuthFunctions().then((auth) => {
+      auth.refreshSession().catch((err: any) => {
+        console.warn('[Misir] Pulse refresh failed:', err);
+      });
     });
+    processQueueIfOnline('alarm').catch(() => {});
   }
 });
 

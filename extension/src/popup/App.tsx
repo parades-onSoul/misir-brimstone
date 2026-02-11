@@ -504,13 +504,12 @@ function MainView({
           />
           {/* Backend health */}
           <div
-            className={`w-2 h-2 rounded-full ${
-              backendHealthy === null
+            className={`w-2 h-2 rounded-full ${backendHealthy === null
                 ? 'bg-gray-500 animate-pulse'
                 : backendHealthy
-                ? 'bg-misir-success'
-                : 'bg-misir-danger'
-            }`}
+                  ? 'bg-misir-success'
+                  : 'bg-misir-danger'
+              }`}
             title={backendHealthy ? 'Backend connected' : 'Backend offline'}
           />
           {auth?.isAuthenticated && (
@@ -540,9 +539,8 @@ function MainView({
                 <p className="text-xs text-misir-muted truncate">{pageData.page.domain}</p>
               </div>
               <span
-                className={`text-[10px] px-2 py-0.5 rounded-full border font-medium whitespace-nowrap ${
-                  ENGAGEMENT_COLORS[classification?.engagementLevel || pageData.engagement]
-                }`}
+                className={`text-[10px] px-2 py-0.5 rounded-full border font-medium whitespace-nowrap ${ENGAGEMENT_COLORS[classification?.engagementLevel || pageData.engagement]
+                  }`}
               >
                 {classification?.engagementLevel || pageData.engagement}
               </span>
@@ -629,13 +627,12 @@ function MainView({
         <button
           onClick={handleCapture}
           disabled={!selectedSpaceId || !pageData || captureState === 'capturing'}
-          className={`w-full py-2.5 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 ${
-            captureState === 'success'
+          className={`w-full py-2.5 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2 ${captureState === 'success'
               ? 'bg-misir-success/20 text-misir-success border border-misir-success/30'
               : captureState === 'error'
-              ? 'bg-misir-danger/20 text-misir-danger border border-misir-danger/30'
-              : 'bg-misir-accent text-white hover:bg-blue-600 disabled:opacity-40'
-          }`}
+                ? 'bg-misir-danger/20 text-misir-danger border border-misir-danger/30'
+                : 'bg-misir-accent text-white hover:bg-blue-600 disabled:opacity-40'
+            }`}
         >
           {captureState === 'capturing' && <Loader2 className="w-4 h-4 animate-spin" />}
           {captureState === 'success' && <Check className="w-4 h-4" />}
@@ -643,10 +640,10 @@ function MainView({
           {captureState === 'capturing'
             ? 'Classifying & Capturing…'
             : captureState === 'success'
-            ? `Captured! (artifact #${lastArtifactId})`
-            : captureState === 'error'
-            ? captureError
-            : 'Capture this page'}
+              ? `Captured! (artifact #${lastArtifactId})`
+              : captureState === 'error'
+                ? captureError
+                : 'Capture this page'}
         </button>
       </div>
 
@@ -660,13 +657,12 @@ function MainView({
             <span className="text-xs font-medium text-misir-muted uppercase tracking-wider">
               Space Details
             </span>
-            <ChevronRight 
-              className={`w-3.5 h-3.5 text-misir-muted transition-transform ${
-                showSpaceDetails ? 'rotate-90' : ''
-              }`} 
+            <ChevronRight
+              className={`w-3.5 h-3.5 text-misir-muted transition-transform ${showSpaceDetails ? 'rotate-90' : ''
+                }`}
             />
           </button>
-          
+
           {showSpaceDetails && (
             <div className="px-4 pb-3 space-y-3">
               {/* Subspaces */}
@@ -677,7 +673,7 @@ function MainView({
                   </h4>
                   <div className="space-y-1">
                     {subspaces.slice(0, 5).map((sub) => (
-                      <div 
+                      <div
                         key={sub.id}
                         className="flex items-center justify-between px-2 py-1.5 rounded bg-misir-surface/50 hover:bg-misir-surface transition"
                       >
@@ -771,9 +767,8 @@ function MainView({
                   </div>
                 </div>
                 <span
-                  className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${
-                    ENGAGEMENT_COLORS[item.engagementLevel]
-                  }`}
+                  className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${ENGAGEMENT_COLORS[item.engagementLevel]
+                    }`}
                 >
                   {item.engagementLevel}
                 </span>

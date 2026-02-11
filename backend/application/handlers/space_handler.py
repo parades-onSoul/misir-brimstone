@@ -7,12 +7,13 @@ Handles:
 - Delete space
 """
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List, Dict, Any
 import logging
 
 import numpy as np
 from supabase import Client
 from infrastructure.repositories.space_repo import SpaceRepository, SpaceResult
+from infrastructure.repositories.artifact_repo import ArtifactRepository
 from infrastructure.services.embedding_service import EmbeddingService
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,7 @@ class SpaceHandler:
     def __init__(self, client: Client):
         self._client = client
         self._repository = SpaceRepository(client)
+        self._artifact_repository = ArtifactRepository(client)
         self._embedding_service = EmbeddingService()
     
     async def create(self, cmd: CreateSpaceCommand) -> SpaceResult:
@@ -182,7 +184,7 @@ class SpaceHandler:
         logger.info(f"Created space {result.id}: {result.name}")
         return result
     
-    async def list(self, cmd: ListSpacesCommand) -> list[SpaceResult]:
+    async def list(self, cmd: ListSpacesCommand) -> List[SpaceResult]:
         """
         List all spaces for a user.
         
@@ -212,3 +214,24 @@ class SpaceHandler:
         """Delete a space scoped to the user."""
         logger.info(f"Deleting space {space_id} for user {user_id[:8]}...")
         return await self._repository.delete(space_id, user_id)
+
+    async def get_timeline(self, space_id: int, user_id: str) -> List[Dict[str, Any]]:
+        """
+        Get timeline artifacts for a space.
+        
+        Args:
+            space_id: Space ID
+            user_id: Owner user ID
+            
+        Returns:
+            List of artifact dicts
+        """
+        # First verify space access
+        space = await self._repository.get_by_id(space_id, user_id)
+        if not space:
+            return []
+            
+        result = await self._artifact_repository.get_timeline_by_space(user_id, space_id)
+        if result.is_ok():
+            return result.unwrap()
+        return []
