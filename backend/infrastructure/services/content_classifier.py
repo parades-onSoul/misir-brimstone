@@ -32,6 +32,7 @@ class ClassificationResult(TypedDict):
     contentType: ContentType
     readingDepth: float
     confidence: float
+    semanticRelevance: float
     keywords: list[str]
     nlpAvailable: bool
 
@@ -151,6 +152,22 @@ STOP_WORDS = {
 }
 
 
+IRRELEVANT_URL_PATTERNS = [
+    r"/login/?$", r"/signin/?$", r"/signup/?$", r"/register/?$",
+    r"/terms-of-service", r"/privacy-policy", r"/legal",
+    r"accounts\.google\.com", r"myaccount\.",
+    r"/settings/?$", r"/dashboard/?$",
+    r"/unsubscribe",
+]
+
+IRRELEVANT_TITLE_PATTERNS = [
+    r"^(log\s?in|sign\s?in|sign\s?up|register|welcome back)$",
+    r"terms of (service|use)", 
+    r"privacy policy",
+    r"^404 ", r"page not found",
+]
+
+
 def _normalize_engagement(level: str) -> EngagementLevel:
     value = (level or "").strip().lower()
     if value in {"latent", "discovered", "engaged", "saturated"}:
@@ -166,6 +183,24 @@ def _normalize_engagement(level: str) -> EngagementLevel:
 
 def _higher_engagement(a: EngagementLevel, b: EngagementLevel) -> EngagementLevel:
     return a if ENGAGEMENT_ORDER.index(a) >= ENGAGEMENT_ORDER.index(b) else b
+
+
+def _is_irrelevant_page(url: str, title: str) -> bool:
+    """Check if page is likely irrelevant (Login, TOS, etc)."""
+    lower_url = url.lower()
+    lower_title = title.lower()
+    
+    # Check URL
+    for p in IRRELEVANT_URL_PATTERNS:
+        if re.search(p, lower_url):
+            return True
+            
+    # Check Title
+    for p in IRRELEVANT_TITLE_PATTERNS:
+        if re.search(p, lower_title):
+            return True
+            
+    return False
 
 
 def _domain(url: str) -> str:
@@ -238,9 +273,9 @@ def _detect_content(url: str, title: str) -> DetectionResult:
             }
 
     if re.search(r"/(blog|post|article|news|story)/", lower_url):
-        return {"contentType": "article", "contentSource": "web", "confidence": 0.5}
+        return {"contentType": "article", "contentSource": "web", "confidence": 0.6}
 
-    return {"contentType": "article", "contentSource": "web", "confidence": 0.3}
+    return {"contentType": "article", "contentSource": "web", "confidence": 0.4}
 
 
 def _keyword_and_density(content: str, max_keywords: int = 15) -> tuple[list[str], float]:
@@ -329,10 +364,31 @@ def classify_content(
     scroll_depth: float,
     reading_depth: float,
     engagement: str,
+    semantic_relevance: float = 0.0,
 ) -> ClassificationResult:
     detection = _detect_content(url, title)
     keywords, density = _keyword_and_density(content)
+
+    # Special handling for non-text content (Video, Chat) where text density is misleading
+    if detection["contentType"] in ("video", "chat", "image"):
+        density = 0.9 # Assume high value for recognized functional content
     
+    # CORE SOLUTION: Content Length Boost
+    # If the URL/Domain detection is weak (e.g. generic URL), but we have
+    # substantial content, we should trust the content.
+    if detection["confidence"] < 0.6 and word_count >= 300:
+        # Boost to valid article confidence
+        detection["confidence"] = 0.8
+        if detection["contentType"] == "article":
+             # Confirm it is an article
+             pass 
+
+    # CORE SOLUTION 2: Video/Chat Boost
+    # If we detected a specific functional type (Video, Chat, Code), we should trust it
+    # more than a generic web page.
+    if detection["contentType"] in ("video", "chat", "code"):
+        detection["confidence"] = max(detection["confidence"], 0.8) 
+
     # 1. Calculate Interaction Score ("Hero Metric")
     interaction_score = _calculate_interaction_score(
         dwell_time_ms=dwell_time_ms,
@@ -351,11 +407,26 @@ def classify_content(
     # 4. Final Confidence Calculation
     # Adjusted to allow high-quality content to be captured as 'latent' (instant push)
     # even with low engagement.
-    confidence = (
-        detection["confidence"] * 0.3
+    # 4. Final Confidence Calculation
+    # Adjusted for "Cold Start" capture:
+    # We give more weight to the static properties (Detection + Density) 
+    # so that relevant content can be captured instantly before reading.
+    # Formula: 40% Detection + 40% Density + 20% Behavior
+    base_confidence = (
+        detection["confidence"] * 0.4
         + density * 0.4
-        + heuristic_confidence * 0.3
+        + heuristic_confidence * 0.2
     )
+    
+    # Boost for high-quality detection (Cold Start Protection)
+    # If we are sure it's a valid type (Article/Video), don't let low behavior drag it below capture threshold.
+    if detection["confidence"] >= 0.8:
+        base_confidence = max(base_confidence, 0.6)
+
+    # 4a. Use Pure Semantic Relevance
+    # Confidence is directly the semantic match to user's knowledge graph
+    # This ensures we only capture content that's relevant to existing markers/subspaces
+    confidence = semantic_relevance
 
     return {
         "engagementLevel": final_level,
@@ -363,6 +434,7 @@ def classify_content(
         "contentType": detection["contentType"],
         "readingDepth": round(interaction_score, 3), # Store the Score in readingDepth
         "confidence": round(confidence, 2),
+        "semanticRelevance": round(semantic_relevance, 2),
         "keywords": keywords,
         "nlpAvailable": True,
     }

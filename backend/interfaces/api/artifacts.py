@@ -20,6 +20,8 @@ from application.handlers.artifact_handler import ArtifactHandler
 from infrastructure.repositories import ArtifactRepository
 from infrastructure.repositories.base import get_supabase_client
 from infrastructure.services.content_classifier import classify_content
+from infrastructure.services.embedding_service import get_embedding_service, EmbeddingService
+import asyncio
 
 router = APIRouter()
 
@@ -70,6 +72,7 @@ class ClassifyContentResponse(BaseModel):
     contentType: str
     readingDepth: float
     confidence: float
+    semanticRelevance: float = 0.0
     keywords: list[str]
     nlpAvailable: bool
 
@@ -83,6 +86,10 @@ def get_artifact_handler(client: Client = Depends(get_supabase_client)) -> Artif
     """Dependency for ArtifactHandler."""
     repo = ArtifactRepository(client)
     return ArtifactHandler(repo)
+
+def get_artifact_repo(client: Client = Depends(get_supabase_client)) -> ArtifactRepository:
+    """Dependency for ArtifactRepository."""
+    return ArtifactRepository(client)
 
 def get_current_user(
     authorization: str = Header(None),
@@ -128,12 +135,31 @@ async def classify_artifact_content(
     request: Request,
     body: ClassifyContentRequest,
     _current_user_id: str = Depends(get_current_user),
+    repo: ArtifactRepository = Depends(get_artifact_repo),
+    embedding_service: EmbeddingService = Depends(get_embedding_service)
 ):
     """
-    Classify page content server-side.
-
-    Used by the extension to avoid in-worker NLP/model bundles.
+    Classify content for potential capture.
+    Now includes semantic relevance check against user's graph.
     """
+    # 1. Generate Embedding (CPU bound, run in executor)
+    # Truncate to reasonable length for performance (model handles 8192)
+    embedding_text = f"{body.page.title} {body.page.content}"[:8000]
+    
+    loop = asyncio.get_running_loop()
+    embedding_result = await loop.run_in_executor(
+        None,
+        lambda: embedding_service.embed_text(embedding_text)
+    )
+
+    # 2. Check Semantic Relevance
+    # Does this content match existing markers or knowledge clusters?
+    semantic_relevance = await repo.find_max_relevance_for_user(
+        user_id=_current_user_id,
+        content_embedding=embedding_result.vector
+    )
+
+    # 3. Classify with Relevance
     result = classify_content(
         url=body.page.url,
         title=body.page.title,
@@ -143,8 +169,19 @@ async def classify_artifact_content(
         scroll_depth=max(0.0, min(1.0, body.metrics.scrollDepth)),
         reading_depth=max(0.0, min(1.5, body.metrics.readingDepth)),
         engagement=body.engagement,
+        semantic_relevance=semantic_relevance
     )
-    return ClassifyContentResponse(**result)
+    
+    return ClassifyContentResponse(
+        engagementLevel=result["engagementLevel"],
+        contentSource=result["contentSource"],
+        contentType=result["contentType"],
+        readingDepth=result["readingDepth"],
+        confidence=result["confidence"],
+        semanticRelevance=result.get("semanticRelevance", 0.0),
+        keywords=result["keywords"],
+        nlpAvailable=result["nlpAvailable"],
+    )
 
 
 @router.get("", response_model=List[ArtifactResponse])

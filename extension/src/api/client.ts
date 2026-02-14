@@ -49,7 +49,7 @@ async function getConfig(): Promise<SensorConfig> {
   const normalizedApiUrl = normalizeApiUrl(result.apiUrl);
   const minWordCount = Number(result.minWordCount ?? 50);
   const minDwellTimeMs = Number(result.minDwellTimeMs ?? 3000);
-  const autoCaptureConfidenceThresholdRaw = Number(result.autoCaptureConfidenceThreshold ?? 0.55);
+  const autoCaptureConfidenceThresholdRaw = Number(result.autoCaptureConfidenceThreshold ?? 0.50);
   const autoCaptureCooldownMsRaw = Number(result.autoCaptureCooldownMs ?? 1800000);
   const autoCaptureSpaceIdRaw = result.autoCaptureSpaceId;
   return {
@@ -61,7 +61,7 @@ async function getConfig(): Promise<SensorConfig> {
     autoCaptureEnabled: result.autoCaptureEnabled === true,
     autoCaptureConfidenceThreshold: Number.isFinite(autoCaptureConfidenceThresholdRaw)
       ? Math.min(1, Math.max(0, autoCaptureConfidenceThresholdRaw))
-      : 0.55,
+      : 0.50,
     autoCaptureCooldownMs: Number.isFinite(autoCaptureCooldownMsRaw)
       ? Math.max(60000, autoCaptureCooldownMsRaw)
       : 1800000,

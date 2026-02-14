@@ -158,7 +158,7 @@ export const DEFAULT_CONFIG: SensorConfig = {
   minWordCount: 50,
   minDwellTimeMs: 3000,
   autoCaptureEnabled: false,
-  autoCaptureConfidenceThreshold: 0.55,
+  autoCaptureConfidenceThreshold: 0.50,
   autoCaptureCooldownMs: 1800000,
 };
 

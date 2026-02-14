@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Optional
 from functools import partial
 import asyncio
+import json
 
 from result import Result, Ok, Err
 from supabase import Client
@@ -608,5 +609,91 @@ class ArtifactRepository:
                 operation="get_paginated",
                 space_id=space_id
             ))
+
+    @staticmethod
+    def _parse_embedding(embedding_data: any) -> Optional[list[float]]:
+        """Parse embedding from Supabase response (string or list) to list[float]."""
+        if embedding_data is None:
+            return None
+        if isinstance(embedding_data, list):
+            return embedding_data
+        if isinstance(embedding_data, str):
+            try:
+                return json.loads(embedding_data)
+            except json.JSONDecodeError:
+                return None
+        return None
+
+    @staticmethod
+    def _dot_product(v1: list[float], v2: list[float]) -> float:
+        """Calculate dot product of two vectors (assumes L2 normalized)."""
+        if not v1 or not v2 or len(v1) != len(v2):
+            return 0.0
+        return sum(a * b for a, b in zip(v1, v2))
+
+    async def find_max_relevance_for_user(self, user_id: str, content_embedding: list[float]) -> float:
+        """
+        Find the maximum semantic relevance (cosine similarity) for the user's existing markers/centroids.
+        
+        Args:
+            user_id: User to check against
+            content_embedding: New content's embedding vector
+            
+        Returns:
+            float: Maximum similarity (0.0 - 1.0)
+        """
+        try:
+            # Run DB calls in executor to avoid blocking main loop
+            loop = asyncio.get_running_loop()
+            
+            # 1. Fetch all marker embeddings for the user
+            marker_response = await loop.run_in_executor(
+                None,
+                partial(
+                    self._client.schema('misir')
+                    .from_('marker')
+                    .select('embedding')
+                    .eq('user_id', user_id)
+                    .execute
+                )
+            )
+            
+            max_relevance = 0.0
+            
+            # Check markers
+            if marker_response.data:
+                for row in marker_response.data:
+                    marker_embedding = self._parse_embedding(row.get('embedding'))
+                    if marker_embedding:
+                        similarity = self._dot_product(content_embedding, marker_embedding)
+                        if similarity > max_relevance:
+                            max_relevance = similarity
+                            
+            # 2. Also check subspace centroids (broader technical relevance)
+            subspace_response = await loop.run_in_executor(
+                 None,
+                 partial(
+                     self._client.schema('misir')
+                     .from_('subspace')
+                     .select('centroid_embedding')
+                     .eq('user_id', user_id)
+                     .not_.is_('centroid_embedding', 'null')
+                     .execute
+                 )
+            )
+            
+            if subspace_response.data:
+                 for row in subspace_response.data:
+                    centroid = self._parse_embedding(row.get('centroid_embedding'))
+                    if centroid:
+                        similarity = self._dot_product(content_embedding, centroid)
+                        if similarity > max_relevance:
+                            max_relevance = similarity
+                            
+            return max_relevance
+            
+        except Exception as e:
+            logger.error(f"Failed to find max relevance: {e}")
+            return 0.0
 
 

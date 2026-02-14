@@ -544,7 +544,7 @@ chrome.runtime.onInstalled.addListener((details) => {
       minWordCount: 50,
       minDwellTimeMs: 3000,
       autoCaptureEnabled: false,
-      autoCaptureConfidenceThreshold: 0.55,
+      autoCaptureConfidenceThreshold: 0.50,
       autoCaptureCooldownMs: 0, // Default to continuous updates
       recentCaptures: [],
     });
