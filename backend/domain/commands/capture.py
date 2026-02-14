@@ -33,6 +33,9 @@ class CaptureArtifactCommand:
     word_count: int
     engagement_level: str  # latent | discovered | engaged | saturated
     content_source: str    # web | pdf | video | chat | note | other
+    decay_rate: str = 'high'  # high | medium | low (calculated from content_source)
+    base_weight: float = 0.2  # 0.2 | 0.5 | 1.0 | 2.0 (calculated from engagement_level)
+    metadata: Optional[dict] = None  # JSONB metadata
     
     # Optional
     subspace_id: Optional[int] = None
@@ -119,4 +122,3 @@ class DeleteArtifactCommand:
     """Command to soft-delete an artifact."""
     artifact_id: int
     user_id: str
-

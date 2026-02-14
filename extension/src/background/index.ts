@@ -86,6 +86,19 @@ function isHttpUrl(url: string): boolean {
   return url.startsWith('http://') || url.startsWith('https://');
 }
 
+function isSystemPage(url: string): boolean {
+  try {
+    const u = new URL(url);
+    // Block local app development and production app
+    if (u.hostname === 'localhost' && u.port === '3000') return true;
+    if (u.hostname === 'misir.app') return true;
+    if (u.hostname.endsWith('.misir.app')) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 async function ensureContentScript(tabId: number): Promise<void> {
   const manifest = chrome.runtime.getManifest();
   const contentScriptFile = manifest.content_scripts?.[0]?.js?.[0];
@@ -179,6 +192,10 @@ async function runAutoCaptureCycle(): Promise<void> {
     return;
   }
 
+  if (isSystemPage(tabUrl)) {
+    return;
+  }
+
   const scraped = await scrapeTabWithFallback(tab.id);
   if (!scraped) {
     return;
@@ -192,10 +209,11 @@ async function runAutoCaptureCycle(): Promise<void> {
     return;
   }
 
-  const cooldownMs = Math.max(60000, config.autoCaptureCooldownMs || 1800000);
-  if (await isInAutoCaptureCooldown(spaceId, page.url, cooldownMs)) {
-    return;
-  }
+  // Cooldown removed per user request - allow continuous updates
+  // const cooldownMs = Math.max(60000, config.autoCaptureCooldownMs || 1800000);
+  // if (await isInAutoCaptureCooldown(spaceId, page.url, cooldownMs)) {
+  //   return;
+  // }
 
   let classification: ClassificationResult;
   try {
@@ -209,9 +227,10 @@ async function runAutoCaptureCycle(): Promise<void> {
     return;
   }
 
-  if (classification.engagementLevel === 'latent') {
-    return;
-  }
+  // Latent check removed per user request - capture instantly if relevant
+  // if (classification.engagementLevel === 'latent') {
+  //   return;
+  // }
 
   const payload = buildCapturePayload(spaceId, page, metrics, classification);
   try {
@@ -499,6 +518,19 @@ chrome.runtime.onMessage.addListener(
   }
 );
 
+// ── Instant Capture Trigger ──────────────────────────
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && tab.active) {
+    // Wait a brief moment for dynamic content/readability
+    setTimeout(() => {
+      runAutoCaptureCycle().catch(err => {
+        console.warn('[Misir BG] Instant capture failed:', err);
+      });
+    }, 3000);
+  }
+});
+
 // ── Install Handler ──────────────────────────────────
 
 chrome.runtime.onInstalled.addListener((details) => {
@@ -513,12 +545,12 @@ chrome.runtime.onInstalled.addListener((details) => {
       minDwellTimeMs: 3000,
       autoCaptureEnabled: false,
       autoCaptureConfidenceThreshold: 0.55,
-      autoCaptureCooldownMs: 1800000,
+      autoCaptureCooldownMs: 0, // Default to continuous updates
       recentCaptures: [],
     });
   }
   // Attempt to process any queued captures after install/update
-  processQueueIfOnline('onInstalled').catch(() => {});
+  processQueueIfOnline('onInstalled').catch(() => { });
 });
 
 // ── Offline Queue Processing (MV3-safe) ─────────────
@@ -550,7 +582,7 @@ async function processQueueIfOnline(trigger: string): Promise<void> {
 }
 
 chrome.runtime.onStartup.addListener(() => {
-  processQueueIfOnline('onStartup').catch(() => {});
+  processQueueIfOnline('onStartup').catch(() => { });
 });
 
 // ── Pulse alarm (keep service worker alive) ──────────
@@ -564,7 +596,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     auth.refreshSession().catch((err: any) => {
       console.warn('[Misir] Pulse refresh failed:', err);
     });
-    processQueueIfOnline('alarm').catch(() => {});
+    processQueueIfOnline('alarm').catch(() => { });
   }
 });
 

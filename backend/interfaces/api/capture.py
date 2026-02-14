@@ -21,12 +21,31 @@ from domain.commands import CaptureArtifactCommand
 from application.handlers import CaptureHandler
 from infrastructure.repositories import ArtifactRepository
 from infrastructure.repositories.subspace_repo import SubspaceRepository
+
+
+# Decay rate mapping based on content source
+DECAY_RATE_MAP = {
+    'web': 'high',        # General web content - quick decay
+    'pdf': 'low',         # Documents - long-lasting
+    'video': 'medium',    # Videos - moderate shelf life
+    'chat': 'high',       # Chat messages - ephemeral
+    'note': 'low',        # Personal notes - reference material
+    'other': 'medium',    # Default fallback
+}
+
+
+# Base weight mapping based on engagement level
+BASE_WEIGHT_MAP = {
+    'latent': 0.2,       # Passive exposure
+    'discovered': 0.5,   # Active awareness
+    'engaged': 1.0,      # Intentional interaction
+    'saturated': 2.0,    # Deep immersion
+}
+
+
 from infrastructure.repositories.base import get_supabase_client
 from infrastructure.services.embedding_service import get_embedding_service
 from infrastructure.services.margin_service import AssignmentMarginService
-
-router = APIRouter()
-
 
 # Request/Response DTOs
 class CaptureRequest(BaseModel):
@@ -486,6 +505,23 @@ async def capture_artifact(
 
     merged_marker_ids = tuple(dict.fromkeys([*body.matched_marker_ids, *inferred_marker_ids]))
 
+    # Calculate decay rate based on content source
+    decay_rate = DECAY_RATE_MAP.get(body.content_source, 'medium')
+    
+    # Calculate base weight based on engagement level
+    base_weight = BASE_WEIGHT_MAP.get(body.engagement_level, 0.2)
+
+    # Construct metadata
+    metadata = {
+        "embedding_model": "nomic-ai/nomic-embed-text-v1.5",  # Current model
+        "embedding_dimension": 768,
+        "capture_method": "auto" if not body.content else "manual",
+        "processing_info": {
+            "captured_at_client": body.captured_at.isoformat() if body.captured_at else None,
+            "processed_at_server": datetime.utcnow().isoformat(),
+        }
+    }
+
     # Convert request to command
     cmd = CaptureArtifactCommand(
         user_id=current_user_id,
@@ -498,6 +534,9 @@ async def capture_artifact(
         word_count=body.word_count,
         engagement_level=body.engagement_level,
         content_source=body.content_source,
+        decay_rate=decay_rate,
+        base_weight=base_weight,
+        metadata=metadata,
         subspace_id=resolved_subspace_id,
         session_id=body.session_id,
         title=body.title,

@@ -255,25 +255,67 @@ def _keyword_and_density(content: str, max_keywords: int = 15) -> tuple[list[str
     return keywords, round(density, 2)
 
 
-def _assess_engagement(
+def _calculate_interaction_score(
     dwell_time_ms: int,
     scroll_depth: float,
     word_count: int,
     content_type: ContentType,
-) -> tuple[EngagementLevel, float]:
-    multiplier = TYPE_MULTIPLIERS.get(content_type, 0.7)
-    adjusted_seconds = (dwell_time_ms * multiplier) / 1000.0
+) -> float:
+    """
+    Calculates the Normalized Interaction Score (0.0 - 1.5).
+    
+    Profiles:
+    A. Text (Article, PDF, Doc): Time + Scroll
+    B. Short (Chat, Social): Time vs 15s Baseline
+    C. Media (Video): Time vs 60s Baseline
+    D. App (Tool, Unknown): Time vs 30s Baseline
+    """
+    dwell_sec = dwell_time_ms / 1000.0
+    
+    # Profile A: Text Content
+    if content_type in ("article", "documentation", "blog", "news"):
+        # Expected reading time (200 wpm)
+        # Cap expected time at 1s to avoid div/0
+        expected_sec = (max(word_count, 1) / 200.0) * 60.0
+        
+        # Time Ratio (capped at 1.5x speed/depth)
+        time_ratio = min(1.5, dwell_sec / max(expected_sec, 1.0))
+        
+        # Formula: 60% Time + 40% Scroll
+        score = (0.6 * time_ratio) + (0.4 * scroll_depth)
+        return min(1.5, score)
 
-    if adjusted_seconds >= 60 and scroll_depth >= 0.5 and word_count >= 300:
-        confidence = min(1.0, 0.7 + (adjusted_seconds - 60.0) / 300.0)
+    # Profile B: Short / Ephemeral
+    elif content_type in ("chat", "social", "forum", "note"):
+        # Baseline: 15 seconds
+        return min(1.5, dwell_sec / 15.0)
+
+    # Profile C: Media
+    elif content_type in ("video", "audio"):
+        # Baseline: 60 seconds
+        return min(1.5, dwell_sec / 60.0)
+
+    # Profile D: Interactive / Tool / Default
+    else: # code, unknown, tools
+        # Baseline: 30 seconds
+        return min(1.5, dwell_sec / 30.0)
+
+
+def _assess_state_from_score(score: float) -> tuple[EngagementLevel, float]:
+    """
+    Maps Interaction Score to Engagement State.
+    Returns (State, Confidence).
+    """
+    # Confidence is roughly the score itself, capped at 1.0
+    confidence = min(1.0, score)
+    
+    if score >= 0.75:
         return "saturated", confidence
-    if adjusted_seconds >= 15 and (scroll_depth >= 0.2 or word_count >= 100):
-        confidence = min(1.0, 0.5 + adjusted_seconds / 120.0)
+    if score >= 0.50:
         return "engaged", confidence
-    if adjusted_seconds >= 8 and (scroll_depth >= 0.1 or word_count >= 40):
-        confidence = min(1.0, 0.4 + adjusted_seconds / 180.0)
+    if score >= 0.25:
         return "discovered", confidence
-    confidence = min(1.0, 0.3 + scroll_depth * 0.3)
+    
     return "latent", confidence
 
 
@@ -290,27 +332,36 @@ def classify_content(
 ) -> ClassificationResult:
     detection = _detect_content(url, title)
     keywords, density = _keyword_and_density(content)
-    heuristic_level, heuristic_confidence = _assess_engagement(
+    
+    # 1. Calculate Interaction Score ("Hero Metric")
+    interaction_score = _calculate_interaction_score(
         dwell_time_ms=dwell_time_ms,
         scroll_depth=scroll_depth,
         word_count=word_count,
         content_type=detection["contentType"],
     )
+    
+    # 2. Determine State from Score
+    heuristic_level, heuristic_confidence = _assess_state_from_score(interaction_score)
 
+    # 3. Respect Client signal if higher (e.g. manual override or better client-side heuristics)
     base_level = _normalize_engagement(engagement)
     final_level = _higher_engagement(base_level, heuristic_level)
 
+    # 4. Final Confidence Calculation
+    # Adjusted to allow high-quality content to be captured as 'latent' (instant push)
+    # even with low engagement.
     confidence = (
         detection["confidence"] * 0.3
-        + density * 0.3
-        + heuristic_confidence * 0.4
+        + density * 0.4
+        + heuristic_confidence * 0.3
     )
 
     return {
         "engagementLevel": final_level,
         "contentSource": detection["contentSource"],
         "contentType": detection["contentType"],
-        "readingDepth": max(0.0, min(1.5, reading_depth)),
+        "readingDepth": round(interaction_score, 3), # Store the Score in readingDepth
         "confidence": round(confidence, 2),
         "keywords": keywords,
         "nlpAvailable": True,
