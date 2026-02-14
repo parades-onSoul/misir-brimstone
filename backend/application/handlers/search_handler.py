@@ -2,9 +2,9 @@
 Search Handler — ISS (Implicit Semantic Search).
 
 Simple, correct search:
-1. Embed query
-2. Normalize + truncate
-3. HNSW search via RPC
+1. Embed query at 384d + 768d (Matryoshka)
+2. Fast candidate retrieval (384d)
+3. Precise rerank (768d)
 4. Optional space/subspace filter
 5. Return ranked artifacts
 """
@@ -20,6 +20,10 @@ from core.logging_config import get_logger
 
 logger = get_logger(__name__)
 
+MATRYOSHKA_COARSE_DIM = 384
+MATRYOSHKA_PREFILTER_MULTIPLIER = 10
+MATRYOSHKA_MAX_PREFILTER_LIMIT = 400
+
 
 @dataclass(frozen=True)
 class SearchCommand:
@@ -29,7 +33,7 @@ class SearchCommand:
     space_id: Optional[int] = None
     subspace_id: Optional[int] = None
     limit: int = 20
-    threshold: float = 0.7  # Minimum similarity
+    threshold: float = 0.55  # Minimum similarity
     
     def __post_init__(self):
         if not self.user_id:
@@ -91,44 +95,90 @@ class SearchHandler:
         """
         logger.info(f"Searching for '{cmd.query[:50]}...' (user: {cmd.user_id[:8]})")
         
-        # 1. Embed query (use query prefix for asymmetric search)
-        embed_result = self._embedding_service.embed_query(cmd.query)
-        query_vector = embed_result.vector
-        dimension = embed_result.dimension
-        
-        logger.debug(f"Query embedded: dim={dimension}")
-        
-        # 2. Search via RPC (uses HNSW index)
+        # 1. Embed query for coarse (384d) + precise (768d) retrieval.
+        coarse_embed_result = self._embedding_service.embed_query(
+            cmd.query,
+            dim=MATRYOSHKA_COARSE_DIM
+        )
+        full_embed_result = self._embedding_service.embed_query(cmd.query)
+
+        query_vector_coarse = coarse_embed_result.vector
+        query_vector_full = full_embed_result.vector
+        dimension = full_embed_result.dimension
+
+        logger.debug(
+            "Query embedded: coarse_dim=%s full_dim=%s",
+            coarse_embed_result.dimension,
+            dimension,
+        )
+
+        prefilter_limit = min(
+            MATRYOSHKA_MAX_PREFILTER_LIMIT,
+            max(cmd.limit, cmd.limit * MATRYOSHKA_PREFILTER_MULTIPLIER),
+        )
+
+        # 2. Search via Matryoshka RPC (fast coarse + precise rerank).
         try:
-            # Build RPC params
             params = {
-                'p_query_vector': query_vector,
+                'p_query_vector_384': query_vector_coarse,
+                'p_query_vector_768': query_vector_full,
                 'p_user_id': cmd.user_id,
                 'p_limit': cmd.limit,
+                'p_prefilter_limit': prefilter_limit,
                 'p_threshold': cmd.threshold,
             }
-            
+
             if cmd.space_id is not None:
                 params['p_space_id'] = cmd.space_id
             if cmd.subspace_id is not None:
                 params['p_subspace_id'] = cmd.subspace_id
-            
+
             response = self._client.schema('misir').rpc(
-                'search_signals_by_vector',
+                'search_signals_by_vector_matryoshka',
                 params
             ).execute()
-            
+
             results = self._parse_results(response.data or [])
-            
-            logger.info(f"Search returned {len(results)} results")
-            
+            logger.info(f"Search returned {len(results)} results via Matryoshka RPC")
+
             return Ok(SearchResponse(
                 results=results,
                 query=cmd.query,
                 count=len(results),
                 dimension_used=dimension
             ))
-            
+
+        except Exception as e:
+            logger.warning(f"Matryoshka search RPC failed, falling back to legacy RPC: {e}")
+
+        # 3. Fallback to legacy single-stage RPC.
+        try:
+            legacy_params = {
+                'p_query_vector': query_vector_full,
+                'p_user_id': cmd.user_id,
+                'p_limit': cmd.limit,
+                'p_threshold': cmd.threshold,
+            }
+            if cmd.space_id is not None:
+                legacy_params['p_space_id'] = cmd.space_id
+            if cmd.subspace_id is not None:
+                legacy_params['p_subspace_id'] = cmd.subspace_id
+
+            response = self._client.schema('misir').rpc(
+                'search_signals_by_vector',
+                legacy_params
+            ).execute()
+
+            results = self._parse_results(response.data or [])
+            logger.info(f"Search returned {len(results)} results via legacy RPC")
+
+            return Ok(SearchResponse(
+                results=results,
+                query=cmd.query,
+                count=len(results),
+                dimension_used=dimension
+            ))
+
         except Exception as e:
             logger.error(f"Search failed: {e}")
             return Err(repository_error(

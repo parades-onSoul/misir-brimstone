@@ -3,7 +3,7 @@
  *
  * Orchestrates the capture pipeline:
  *   1. Receives page data from content script
- *   2. Runs NLP classification pipeline
+ *   2. Runs backend classification pipeline
  *   3. Sends to backend API
  *   4. Stores recent captures locally
  *
@@ -11,7 +11,7 @@
  *   - Config management
  *   - Space fetching
  *   - Health checks
- *   - NLP status
+ *   - Classifier status
  */
 
 // Guard against service worker context issues
@@ -19,32 +19,27 @@ if (typeof window === 'undefined' || !window.addEventListener) {
   console.log('[Misir] Service worker context detected, initializing safely');
 }
 
-import { classifyPage, buildPayload } from '@/classify/pipeline';
 import {
   fetchSpaces,
   captureArtifact,
+  classifyContent,
+  getClassifierStatus,
   healthCheck,
   getConfig,
   setConfig,
 } from '@/api/client';
-
-// Lazy-load auth functions to avoid window access at module init time
-let authFunctions: any = null;
-async function getAuthFunctions() {
-  if (!authFunctions) {
-    authFunctions = await import('@/api/supabase');
-  }
-  return authFunctions;
-}
 import {
   addToQueue,
   processQueue,
   getQueue,
+  clearQueue,
 } from '@/storage/queue';
+import * as auth from '@/api/supabase';
 import type {
   ScrapedPage,
   ReadingMetrics,
   EngagementLevel,
+  ClassificationResult,
   RecentCapture,
   SensorConfig,
   MessageResponse,
@@ -62,6 +57,219 @@ async function addRecentCapture(capture: RecentCapture): Promise<void> {
   const recent = await getRecentCaptures();
   recent.unshift(capture);
   await chrome.storage.local.set({ recentCaptures: recent.slice(0, 30) });
+}
+
+function normalizeUrlForDedup(rawUrl: string): string {
+  try {
+    const u = new URL(rawUrl);
+    u.hash = '';
+    const trackingParams = [
+      'utm_source',
+      'utm_medium',
+      'utm_campaign',
+      'utm_content',
+      'utm_term',
+      'ref',
+      'fbclid',
+      'gclid',
+    ];
+    for (const param of trackingParams) {
+      u.searchParams.delete(param);
+    }
+    return u.toString().replace(/\/$/, '');
+  } catch {
+    return rawUrl;
+  }
+}
+
+function isHttpUrl(url: string): boolean {
+  return url.startsWith('http://') || url.startsWith('https://');
+}
+
+async function ensureContentScript(tabId: number): Promise<void> {
+  const manifest = chrome.runtime.getManifest();
+  const contentScriptFile = manifest.content_scripts?.[0]?.js?.[0];
+  if (!contentScriptFile) return;
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: [contentScriptFile],
+  });
+}
+
+async function scrapeTabWithFallback(
+  tabId: number
+): Promise<{ page: ScrapedPage; metrics: ReadingMetrics; engagement: EngagementLevel } | null> {
+  try {
+    const resp = await chrome.tabs.sendMessage(tabId, { type: 'SCRAPE_PAGE' });
+    if (resp?.success && resp.data) {
+      return resp.data;
+    }
+  } catch {
+    // Continue to injection fallback.
+  }
+
+  try {
+    await ensureContentScript(tabId);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const retryResp = await chrome.tabs.sendMessage(tabId, { type: 'SCRAPE_PAGE' });
+    if (retryResp?.success && retryResp.data) {
+      return retryResp.data;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+async function resolveAutoCaptureSpaceId(config: SensorConfig): Promise<number | null> {
+  if (typeof config.autoCaptureSpaceId === 'number' && config.autoCaptureSpaceId > 0) {
+    return config.autoCaptureSpaceId;
+  }
+
+  try {
+    const spaces = await fetchSpaces();
+    if (spaces.length === 1) {
+      await setConfig({ autoCaptureSpaceId: spaces[0].id });
+      return spaces[0].id;
+    }
+  } catch {
+    // Ignore auth/network failures and skip auto capture.
+  }
+
+  return null;
+}
+
+async function isInAutoCaptureCooldown(
+  spaceId: number,
+  url: string,
+  cooldownMs: number
+): Promise<boolean> {
+  const normalized = normalizeUrlForDedup(url);
+  const recent = await getRecentCaptures();
+  const now = Date.now();
+
+  for (const item of recent) {
+    if (item.spaceId !== spaceId) continue;
+    if (normalizeUrlForDedup(item.url) !== normalized) continue;
+    const capturedAt = new Date(item.capturedAt).getTime();
+    if (!Number.isFinite(capturedAt)) continue;
+    if (now - capturedAt < cooldownMs) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function runAutoCaptureCycle(): Promise<void> {
+  const config = await getConfig();
+  if (!config.enabled || !config.autoCaptureEnabled) {
+    return;
+  }
+
+  const spaceId = await resolveAutoCaptureSpaceId(config);
+  if (!spaceId) {
+    return;
+  }
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tabUrl = tab?.url ?? tab?.pendingUrl ?? '';
+  if (!tab?.id || !tabUrl || !isHttpUrl(tabUrl)) {
+    return;
+  }
+
+  const scraped = await scrapeTabWithFallback(tab.id);
+  if (!scraped) {
+    return;
+  }
+
+  const { page, metrics, engagement } = scraped;
+  if (page.wordCount < config.minWordCount) {
+    return;
+  }
+  if (metrics.dwellTimeMs < config.minDwellTimeMs) {
+    return;
+  }
+
+  const cooldownMs = Math.max(60000, config.autoCaptureCooldownMs || 1800000);
+  if (await isInAutoCaptureCooldown(spaceId, page.url, cooldownMs)) {
+    return;
+  }
+
+  let classification: ClassificationResult;
+  try {
+    classification = await classifyContent(page, metrics, engagement);
+  } catch (error) {
+    console.warn('[Misir BG] Auto-capture classify failed, using fallback', error);
+    classification = fallbackClassification(metrics, engagement);
+  }
+
+  if (classification.confidence < config.autoCaptureConfidenceThreshold) {
+    return;
+  }
+
+  if (classification.engagementLevel === 'latent') {
+    return;
+  }
+
+  const payload = buildCapturePayload(spaceId, page, metrics, classification);
+  try {
+    await captureArtifact(payload);
+    await addRecentCapture({
+      url: page.url,
+      title: page.title,
+      domain: page.domain,
+      spaceId,
+      engagementLevel: classification.engagementLevel,
+      contentType: classification.contentType,
+      capturedAt: new Date().toISOString(),
+    });
+    console.log('[Misir BG] Auto-captured relevant page', {
+      spaceId,
+      url: page.url,
+      confidence: classification.confidence,
+    });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    const queueId = await addToQueue(payload, errorMsg);
+    console.warn('[Misir BG] Auto-capture failed, added to queue:', queueId, errorMsg);
+  }
+}
+
+function buildCapturePayload(
+  spaceId: number,
+  page: ScrapedPage,
+  metrics: ReadingMetrics,
+  classification: Pick<ClassificationResult, 'engagementLevel' | 'contentSource' | 'readingDepth'>
+): CapturePayload {
+  return {
+    space_id: spaceId,
+    url: page.url,
+    title: page.title,
+    content: page.content.substring(0, 30000),
+    reading_depth: classification.readingDepth,
+    scroll_depth: metrics.scrollDepth,
+    dwell_time_ms: metrics.dwellTimeMs,
+    word_count: page.wordCount,
+    engagement_level: classification.engagementLevel,
+    content_source: classification.contentSource,
+  };
+}
+
+function fallbackClassification(
+  metrics: ReadingMetrics,
+  engagement: EngagementLevel
+): ClassificationResult {
+  return {
+    engagementLevel: engagement,
+    contentSource: 'web' as const,
+    contentType: 'article' as const,
+    readingDepth: metrics.readingDepth,
+    confidence: 0.2,
+    keywords: [] as string[],
+    nlpAvailable: false,
+  };
 }
 
 // ── Message Handler ──────────────────────────────────
@@ -95,11 +303,17 @@ chrome.runtime.onMessage.addListener(
             const engagement = msg.engagement as EngagementLevel;
             const spaceId = msg.spaceId as number;
 
-            // 1. Run classification pipeline (NLP + heuristics)
-            const classification = await classifyPage(page, metrics, engagement);
+            // 1. Run backend classification
+            let classification: ClassificationResult;
+            try {
+              classification = await classifyContent(page, metrics, engagement);
+            } catch (error) {
+              console.warn('[Misir BG] Backend classify failed, using fallback', error);
+              classification = fallbackClassification(metrics, engagement);
+            }
 
             // 2. Build payload
-            const payload = buildPayload(spaceId, page, metrics, classification);
+            const payload = buildCapturePayload(spaceId, page, metrics, classification);
 
             try {
               // 3. Send to backend (backend handles Nomic 1.5 embedding)
@@ -157,9 +371,8 @@ chrome.runtime.onMessage.addListener(
 
           // ── NLP Status ─────────────────
           case 'GET_NLP_STATUS': {
-            const { isNLPReady } = await import('@/classify/nlp');
-            const ready = await isNLPReady();
-            return { success: true, data: { available: ready } };
+            const status = await getClassifierStatus();
+            return { success: true, data: status };
           }
 
           // ── Classify (without capture) ─
@@ -167,7 +380,13 @@ chrome.runtime.onMessage.addListener(
             const pg = msg.page as ScrapedPage;
             const mt = msg.metrics as ReadingMetrics;
             const eng = msg.engagement as EngagementLevel;
-            const cls = await classifyPage(pg, mt, eng);
+            let cls: ClassificationResult;
+            try {
+              cls = await classifyContent(pg, mt, eng);
+            } catch (error) {
+              console.warn('[Misir BG] CLASSIFY_CONTENT failed, using fallback', error);
+              cls = fallbackClassification(mt, eng);
+            }
             return { success: true, data: cls };
           }
 
@@ -183,7 +402,6 @@ chrome.runtime.onMessage.addListener(
           }
 
           case 'CLEAR_QUEUE': {
-            const { clearQueue } = await import('@/storage/queue');
             await clearQueue();
             return { success: true };
           }
@@ -191,7 +409,6 @@ chrome.runtime.onMessage.addListener(
           // ── Auth ───────────────────────
           case 'SIGN_IN': {
             try {
-              const auth = await getAuthFunctions();
               const result = await auth.signIn(
                 msg.email as string,
                 msg.password as string
@@ -206,19 +423,16 @@ chrome.runtime.onMessage.addListener(
           }
 
           case 'SIGN_OUT': {
-            const auth = await getAuthFunctions();
             await auth.signOut();
             return { success: true };
           }
 
           case 'GET_AUTH_STATE': {
-            const auth = await getAuthFunctions();
             const authState = await auth.getAuthState();
             return { success: true, data: authState };
           }
 
           case 'REFRESH_SESSION': {
-            const auth = await getAuthFunctions();
             const refreshed = await auth.refreshSession();
             return {
               success: !!refreshed,
@@ -230,7 +444,6 @@ chrome.runtime.onMessage.addListener(
           // ── Supabase Data Fetching ─────
           case 'FETCH_SPACES_SUPABASE': {
             try {
-              const auth = await getAuthFunctions();
               const spaces = await auth.fetchSpacesFromSupabase();
               return { success: true, data: spaces };
             } catch (err) {
@@ -243,7 +456,6 @@ chrome.runtime.onMessage.addListener(
 
           case 'FETCH_SUBSPACES_SUPABASE': {
             try {
-              const auth = await getAuthFunctions();
               const subspaces = await auth.fetchSubspacesFromSupabase(
                 msg.spaceId as number
               );
@@ -258,7 +470,6 @@ chrome.runtime.onMessage.addListener(
 
           case 'FETCH_MARKERS_SUPABASE': {
             try {
-              const auth = await getAuthFunctions();
               const markers = await auth.fetchMarkersFromSupabase(
                 msg.spaceId as number
               );
@@ -300,6 +511,9 @@ chrome.runtime.onInstalled.addListener((details) => {
       enabled: true,
       minWordCount: 50,
       minDwellTimeMs: 3000,
+      autoCaptureEnabled: false,
+      autoCaptureConfidenceThreshold: 0.55,
+      autoCaptureCooldownMs: 1800000,
       recentCaptures: [],
     });
   }
@@ -327,6 +541,12 @@ async function processQueueIfOnline(trigger: string): Promise<void> {
   } catch (err) {
     console.error('[Misir] Failed to process queue:', err);
   }
+
+  try {
+    await runAutoCaptureCycle();
+  } catch (err) {
+    console.error('[Misir] Auto-capture cycle failed:', err);
+  }
 }
 
 chrome.runtime.onStartup.addListener(() => {
@@ -341,10 +561,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'misir-pulse') {
     console.log('[Misir] Pulse ♥', new Date().toISOString());
     // Proactively refresh token if needed (silent fail)
-    getAuthFunctions().then((auth) => {
-      auth.refreshSession().catch((err: any) => {
-        console.warn('[Misir] Pulse refresh failed:', err);
-      });
+    auth.refreshSession().catch((err: any) => {
+      console.warn('[Misir] Pulse refresh failed:', err);
     });
     processQueueIfOnline('alarm').catch(() => {});
   }

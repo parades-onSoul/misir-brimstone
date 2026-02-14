@@ -36,6 +36,11 @@ class SubspaceResult:
     confidence: float
     learning_rate: float
     centroid_embedding: Optional[list[float]]
+    centroid_updated_at: Optional[str]
+    created_at: Optional[str]
+    updated_at: Optional[str]
+    last_active_at: Optional[str]
+    recent_artifact_count: Optional[int]
     markers: list[str]
 
 
@@ -52,7 +57,8 @@ class SubspaceRepository:
     def __init__(self, client: Client):
         self._client = client
 
-    def _parse_embedding(self, embedding_data: any) -> Optional[list[float]]:
+    @staticmethod
+    def _parse_embedding(embedding_data: any) -> Optional[list[float]]:
         """Parse embedding from Supabase response (string or list) to list[float]."""
         if embedding_data is None:
             return None
@@ -65,6 +71,108 @@ class SubspaceRepository:
                 logger.warning(f"Failed to parse embedding string: {embedding_data[:50]}...")
                 return None
         return None
+
+    @staticmethod
+    def _parse_timestamp(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except Exception:
+            return None
+
+    def _collect_subspace_artifact_stats(
+        self,
+        space_id: int,
+        user_id: str
+    ) -> dict[int, dict[str, Optional[object]]]:
+        """
+        Build per-subspace artifact stats from artifact table.
+
+        This keeps UI counters/last-active accurate even if DB trigger-maintained
+        subspace counters lag or were skipped.
+        """
+        stats: dict[int, dict[str, Optional[object]]] = {}
+        response = (
+            self._client.schema('misir')
+            .from_('artifact')
+            .select('subspace_id, captured_at, updated_at, created_at')
+            .eq('space_id', space_id)
+            .eq('user_id', user_id)
+            .is_('deleted_at', 'null')
+            .not_.is_('subspace_id', 'null')
+            .execute()
+        )
+
+        for row in (response.data or []):
+            subspace_id = row.get('subspace_id')
+            if not isinstance(subspace_id, int):
+                continue
+
+            candidate = row.get('captured_at') or row.get('updated_at') or row.get('created_at')
+            candidate_dt = self._parse_timestamp(candidate)
+            current = stats.get(subspace_id)
+            if current is None:
+                stats[subspace_id] = {
+                    'count': 1,
+                    'last_active': candidate,
+                    'last_active_dt': candidate_dt,
+                }
+                continue
+
+            current['count'] = int(current['count'] or 0) + 1
+            current_dt = current.get('last_active_dt')
+            if candidate_dt and (current_dt is None or candidate_dt > current_dt):
+                current['last_active'] = candidate
+                current['last_active_dt'] = candidate_dt
+
+        # Fallback via signals: captures can update signal.subspace_id while artifact
+        # stays stale on URL upsert collisions. This keeps topic activity accurate.
+        signal_rows = (
+            self._client.schema('misir')
+            .from_('signal')
+            .select('subspace_id, artifact_id, created_at')
+            .eq('space_id', space_id)
+            .eq('user_id', user_id)
+            .is_('deleted_at', 'null')
+            .not_.is_('subspace_id', 'null')
+            .execute()
+        )
+        signal_artifacts: dict[int, set[int]] = {}
+        signal_last_active: dict[int, tuple[Optional[str], Optional[datetime]]] = {}
+        for row in (signal_rows.data or []):
+            subspace_id = row.get('subspace_id')
+            artifact_id = row.get('artifact_id')
+            if not isinstance(subspace_id, int):
+                continue
+            if isinstance(artifact_id, int):
+                signal_artifacts.setdefault(subspace_id, set()).add(artifact_id)
+
+            created_at = row.get('created_at')
+            created_at_dt = self._parse_timestamp(created_at)
+            current = signal_last_active.get(subspace_id)
+            if current is None or (
+                created_at_dt is not None and (current[1] is None or created_at_dt > current[1])
+            ):
+                signal_last_active[subspace_id] = (created_at, created_at_dt)
+
+        for subspace_id, artifact_ids in signal_artifacts.items():
+            stats.setdefault(
+                subspace_id,
+                {'count': 0, 'last_active': None, 'last_active_dt': None},
+            )
+            stats[subspace_id]['count'] = max(int(stats[subspace_id]['count'] or 0), len(artifact_ids))
+
+        for subspace_id, (last_active, last_active_dt) in signal_last_active.items():
+            stats.setdefault(
+                subspace_id,
+                {'count': 0, 'last_active': None, 'last_active_dt': None},
+            )
+            current_dt = stats[subspace_id].get('last_active_dt')
+            if last_active_dt and (current_dt is None or last_active_dt > current_dt):
+                stats[subspace_id]['last_active'] = last_active
+                stats[subspace_id]['last_active_dt'] = last_active_dt
+        return stats
     
     async def get_by_space(
         self, 
@@ -82,6 +190,8 @@ class SubspaceRepository:
             Result[list[SubspaceResult], ErrorDetail]: List of subspaces or error
         """
         try:
+            artifact_stats = self._collect_subspace_artifact_stats(space_id, user_id)
+
             response = (
                 self._client.schema('misir')
                 .from_('subspace')
@@ -101,16 +211,32 @@ class SubspaceRepository:
                         if sm.get('marker') and sm['marker'].get('label'):
                             markers.append(sm['marker']['label'])
 
+                computed = artifact_stats.get(row['id']) or {}
+                computed_count = int(computed.get('count') or 0)
+                computed_last_active = computed.get('last_active')
+                row_updated = row.get('updated_at')
+                row_updated_dt = self._parse_timestamp(row_updated)
+                computed_dt = computed.get('last_active_dt')
+
+                effective_updated = row_updated
+                if computed_dt and (row_updated_dt is None or computed_dt > row_updated_dt):
+                    effective_updated = computed_last_active
+
                 results.append(SubspaceResult(
                     id=row['id'],
                     space_id=row['space_id'],
                     name=row['name'],
                     description=row.get('description'),
                     user_id=row['user_id'],
-                    artifact_count=row.get('artifact_count', 0),
+                    artifact_count=max(row.get('artifact_count', 0), computed_count),
                     confidence=row.get('confidence', 0.0),
                     learning_rate=row.get('learning_rate', 0.1),
                     centroid_embedding=self._parse_embedding(row.get('centroid_embedding')),
+                    centroid_updated_at=row.get('centroid_updated_at'),
+                    created_at=row.get('created_at'),
+                    updated_at=effective_updated,
+                    last_active_at=computed_last_active if isinstance(computed_last_active, str) else None,
+                    recent_artifact_count=computed_count if computed_count > 0 else None,
                     markers=markers
                 ))
             return Ok(results)
@@ -151,7 +277,11 @@ class SubspaceRepository:
             
             if response.data and len(response.data) > 0:
                 row = response.data[0]
-                
+                artifact_stats = self._collect_subspace_artifact_stats(
+                    space_id=row['space_id'],
+                    user_id=user_id
+                )
+
                 # Flatten nested markers
                 markers = []
                 if row.get('subspace_marker'):
@@ -159,16 +289,31 @@ class SubspaceRepository:
                         if sm.get('marker') and sm['marker'].get('label'):
                             markers.append(sm['marker']['label'])
 
+                computed = artifact_stats.get(row['id']) or {}
+                computed_count = int(computed.get('count') or 0)
+                computed_last_active = computed.get('last_active')
+                row_updated = row.get('updated_at')
+                row_updated_dt = self._parse_timestamp(row_updated)
+                computed_dt = computed.get('last_active_dt')
+                effective_updated = row_updated
+                if computed_dt and (row_updated_dt is None or computed_dt > row_updated_dt):
+                    effective_updated = computed_last_active
+
                 result = SubspaceResult(
                     id=row['id'],
                     space_id=row['space_id'],
                     name=row['name'],
                     description=row.get('description'),
                     user_id=row['user_id'],
-                    artifact_count=row.get('artifact_count', 0),
+                    artifact_count=max(row.get('artifact_count', 0), computed_count),
                     confidence=row.get('confidence', 0.0),
                     learning_rate=row.get('learning_rate', 0.1),
                     centroid_embedding=self._parse_embedding(row.get('centroid_embedding')),
+                    centroid_updated_at=row.get('centroid_updated_at'),
+                    created_at=row.get('created_at'),
+                    updated_at=effective_updated,
+                    last_active_at=computed_last_active if isinstance(computed_last_active, str) else None,
+                    recent_artifact_count=computed_count if computed_count > 0 else None,
                     markers=markers
                 )
                 return Ok(result)
@@ -313,7 +458,13 @@ class SubspaceRepository:
                     artifact_count=row.get('artifact_count', 0),
                     confidence=row.get('confidence', 0.0),
                     learning_rate=row.get('learning_rate', 0.1),
-                    centroid_embedding=row.get('centroid_embedding')
+                    centroid_embedding=row.get('centroid_embedding'),
+                    centroid_updated_at=row.get('centroid_updated_at'),
+                    created_at=row.get('created_at'),
+                    updated_at=row.get('updated_at'),
+                    last_active_at=None,
+                    recent_artifact_count=None,
+                    markers=[]
                 )
             else:
                 raise ValueError("Insert returned no data")
@@ -546,7 +697,7 @@ class SubspaceRepository:
         subspace_id: int,
         marker_id: int,
         weight: float = 1.0,
-        source: str = "manual"
+        source: str = "user_defined"
     ) -> bool:
         """
         Associate a marker with a subspace (Junction Table).
@@ -627,7 +778,7 @@ class SubspaceRepository:
             response = (
                 self._client.schema('misir')
                 .from_('subspace_marker')
-                .select('weight, source, marker:marker_id(id, term, embedding)')
+                .select('weight, source, marker:marker_id(id, label, embedding)')
                 .eq('subspace_id', subspace_id)
                 .execute()
             )

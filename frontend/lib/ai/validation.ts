@@ -1,5 +1,5 @@
 /**
- * Gemini Output Validation
+ * Groq Output Validation
  * 
  * Enforces quality rules and prevents garbage outputs
  */
@@ -24,6 +24,12 @@ const BANNED_MARKERS = [
   'various',
 ];
 
+export const MODE_MARKER_LIMITS: Record<PromptMode, { min: number; max: number }> = {
+  standard: { min: 4, max: 6 },
+  advanced: { min: 5, max: 6 },
+  fast: { min: 3, max: 4 },
+};
+
 // Expected output ranges per mode
 const OUTPUT_LIMITS = {
   standard: { min: 4, max: 8 },
@@ -31,13 +37,65 @@ const OUTPUT_LIMITS = {
   fast: { min: 3, max: 5 },
 };
 
-/**
- * Validate and clean Gemini output
- */
-export function validateGeminiOutput(
-  data: unknown,
+export interface ValidationOptions {
+  enforceMarkerMinimum?: boolean;
+}
+
+function normalizeMarker(marker: string): string {
+  return marker.toLowerCase().trim();
+}
+
+function dedupeSubspaceMarkers(markers: string[]): string[] {
+  return Array.from(
+    new Set(
+      markers
+        .map((m) => normalizeMarker(m))
+        .filter((m) => m.length > 0)
+    )
+  );
+}
+
+function filterAndLimitMarkers(
+  markers: string[],
+  globalMarkers: Set<string>,
   mode: PromptMode
+): string[] {
+  const limits = MODE_MARKER_LIMITS[mode];
+  const cleaned: string[] = [];
+
+  for (const marker of dedupeSubspaceMarkers(markers)) {
+    if (BANNED_MARKERS.includes(marker)) {
+      console.warn(`Filtering banned marker: "${marker}"`);
+      continue;
+    }
+
+    // Keep exact normalized global uniqueness only.
+    if (globalMarkers.has(marker)) {
+      console.warn(`Filtering duplicate marker across subspaces: "${marker}"`);
+      continue;
+    }
+
+    cleaned.push(marker);
+    globalMarkers.add(marker);
+
+    if (cleaned.length >= limits.max) {
+      break;
+    }
+  }
+
+  return cleaned;
+}
+
+/**
+ * Validate and clean Groq output
+ */
+export function validateGroqOutput(
+  data: unknown,
+  mode: PromptMode,
+  options: ValidationOptions = {}
 ): SubspaceWithMarkers[] {
+  const enforceMarkerMinimum = options.enforceMarkerMinimum ?? true;
+
   // Rule 1: Must be an array
   if (!Array.isArray(data)) {
     throw new Error('Output must be an array');
@@ -68,38 +126,16 @@ export function validateGeminiOutput(
   // Rule 3: Marker quality & global deduplication
   const allMarkersGlobal = new Set<string>();
   const validated: SubspaceWithMarkers[] = [];
+  const underfilledSubspaces: string[] = [];
+  const markerLimits = MODE_MARKER_LIMITS[mode];
 
   for (const subspace of data) {
-    // Remove duplicates within subspace
-    const uniqueMarkers = new Set(
-      (subspace.markers as string[])
-        .map((m) => m.toLowerCase().trim())
-        .filter((m) => m.length > 0)
-    );
+    const cleanedMarkers = filterAndLimitMarkers(subspace.markers as string[], allMarkersGlobal, mode);
 
-    const cleanedMarkers: string[] = [];
-
-    for (const marker of uniqueMarkers) {
-      // Check if banned
-      if (BANNED_MARKERS.includes(marker.toLowerCase())) {
-        console.warn(`Filtering banned marker: "${marker}"`);
-        continue;
-      }
-
-      // Check global duplicates
-      if (allMarkersGlobal.has(marker)) {
-        console.warn(`Filtering duplicate marker across subspaces: "${marker}"`);
-        continue;
-      }
-
-      allMarkersGlobal.add(marker);
-      cleanedMarkers.push(marker);
-    }
-
-    // Require at least 2 markers per subspace
-    if (cleanedMarkers.length < 2) {
-      console.warn(`Subspace "${subspace.name}" has insufficient markers after filtering`);
-      continue;
+    if (cleanedMarkers.length < markerLimits.min) {
+      underfilledSubspaces.push(
+        `"${String(subspace.name)}" (${cleanedMarkers.length}/${markerLimits.min})`
+      );
     }
 
     validated.push({
@@ -110,6 +146,16 @@ export function validateGeminiOutput(
       prerequisites: subspace.prerequisites,
       suggested_study_order: subspace.suggested_study_order,
     });
+  }
+
+  if (validated.length === 0) {
+    throw new Error('All subspaces filtered out during validation');
+  }
+
+  if (enforceMarkerMinimum && underfilledSubspaces.length > 0) {
+    throw new Error(
+      `Underfilled markers for mode "${mode}": ${underfilledSubspaces.join(', ')}`
+    );
   }
 
   // Rule 4: Quantity validation
@@ -123,10 +169,6 @@ export function validateGeminiOutput(
     // Don't fail - prefer imperfect result over no result
   }
 
-  if (validated.length === 0) {
-    throw new Error('All subspaces filtered out during validation');
-  }
-
   return validated;
 }
 
@@ -134,7 +176,7 @@ export function validateGeminiOutput(
  * Check if a marker is high quality
  */
 export function isQualityMarker(marker: string): boolean {
-  const cleaned = marker.toLowerCase().trim();
+  const cleaned = normalizeMarker(marker);
   
   // Too short
   if (cleaned.length < 2) {
@@ -152,4 +194,54 @@ export function isQualityMarker(marker: string): boolean {
   }
 
   return true;
+}
+
+/**
+ * Merge LLM repair markers into validated subspaces while preserving
+ * global uniqueness and mode-specific marker limits.
+ */
+export function applyMarkerRepairs(
+  subspaces: SubspaceWithMarkers[],
+  repairsBySubspace: Record<string, string[]>,
+  mode: PromptMode
+): SubspaceWithMarkers[] {
+  const limits = MODE_MARKER_LIMITS[mode];
+  const globallyUsed = new Set<string>();
+
+  for (const subspace of subspaces) {
+    for (const marker of subspace.markers) {
+      globallyUsed.add(normalizeMarker(marker));
+    }
+  }
+
+  return subspaces.map((subspace) => {
+    const key = String(subspace.name).toLowerCase().trim();
+    const repairCandidates = repairsBySubspace[key] ?? [];
+    if (repairCandidates.length === 0) {
+      return subspace;
+    }
+
+    const updatedMarkers = [...subspace.markers];
+    const localSet = new Set(updatedMarkers.map((m) => normalizeMarker(m)));
+
+    for (const rawCandidate of repairCandidates) {
+      if (updatedMarkers.length >= limits.max) {
+        break;
+      }
+
+      const candidate = normalizeMarker(rawCandidate);
+      if (!isQualityMarker(candidate)) {
+        continue;
+      }
+      if (localSet.has(candidate) || globallyUsed.has(candidate)) {
+        continue;
+      }
+
+      updatedMarkers.push(candidate);
+      localSet.add(candidate);
+      globallyUsed.add(candidate);
+    }
+
+    return { ...subspace, markers: updatedMarkers };
+  });
 }

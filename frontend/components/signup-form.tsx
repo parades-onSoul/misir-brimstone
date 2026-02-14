@@ -22,10 +22,7 @@ import {
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 
-export function SignupForm({
-  className,
-  ...props
-}: React.ComponentProps<"div">) {
+export function SignupForm({ className }: { className?: string }) {
   const router = useRouter();
   const { signUp } = useAuth();
   const [email, setEmail] = useState('');
@@ -71,7 +68,6 @@ export function SignupForm({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
       className={cn("flex flex-col gap-6", className)}
-      {...props}
     >
       <Card className="border-border/40 shadow-2xl">
         <CardHeader className="text-center space-y-3 pb-8 border-b border-border/40 bg-linear-to-b from-secondary/30 to-secondary/10">

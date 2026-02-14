@@ -100,7 +100,9 @@ export function TopicAreas({
           const isOpen = expandedId === subspace.id;
           const evidence = subspace.artifact_count ?? subspace.artifacts_count ?? 0;
           const focusLabel = getFocusLabel(subspace.confidence ?? 0);
-          const lastActive = formatRelativeTime(subspace.updated_at || subspace.centroid_updated_at);
+          const lastActive = formatRelativeTime(
+            subspace.last_active_at || subspace.updated_at || subspace.centroid_updated_at
+          );
           const previews = previewsBySubspace.get(subspace.id) ?? [];
 
           return (

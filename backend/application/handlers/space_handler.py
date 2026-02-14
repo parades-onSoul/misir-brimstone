@@ -48,6 +48,23 @@ class ListSpacesCommand:
             raise ValueError("user_id is required")
 
 
+@dataclass(frozen=True)
+class UpdateSpaceCommand:
+    """Command to update an existing space."""
+    space_id: int
+    user_id: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+    def __post_init__(self):
+        if not self.user_id:
+            raise ValueError("user_id is required")
+        if self.space_id <= 0:
+            raise ValueError("space_id must be positive")
+        if self.name is None and self.description is None:
+            raise ValueError("at least one mutable field is required")
+
+
 class SpaceHandler:
     """
     Handler for space operations.
@@ -209,6 +226,17 @@ class SpaceHandler:
             SpaceResult or None
         """
         return await self._repository.get_by_id(space_id, user_id)
+
+    async def update(self, cmd: UpdateSpaceCommand) -> Optional[SpaceResult]:
+        """Update mutable space fields."""
+        name = cmd.name.strip() if isinstance(cmd.name, str) else None
+        description = cmd.description.strip() if isinstance(cmd.description, str) else cmd.description
+        return await self._repository.update(
+            space_id=cmd.space_id,
+            user_id=cmd.user_id,
+            name=name,
+            description=description,
+        )
 
     async def delete(self, space_id: int, user_id: str) -> bool:
         """Delete a space scoped to the user."""

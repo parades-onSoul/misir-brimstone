@@ -114,9 +114,6 @@ export async function signIn(
 
     await saveSession(data.session);
 
-    // Also store userId in config so other parts of the extension can use it
-    await chrome.storage.local.set({ userId: data.session.user.id });
-
     return {
       isAuthenticated: true,
       userId: data.session.user.id,
@@ -142,7 +139,7 @@ export async function signOut(): Promise<void> {
   }
 
   await clearSession();
-  // Don't clear userId from config — keep it as fallback for mock auth
+  await chrome.storage.local.remove(['userId']);
 }
 
 /**
@@ -201,8 +198,6 @@ export async function refreshSession(): Promise<AuthState | null> {
     }
 
     await saveSession(data.session);
-    await chrome.storage.local.set({ userId: data.session.user.id });
-
     return {
       isAuthenticated: true,
       userId: data.session.user.id,
@@ -250,12 +245,16 @@ export async function fetchSpacesFromSupabase(): Promise<import('@/types').Space
     }
 
     const supabase = getClient();
+    const stored = await loadSession();
+    if (!stored?.access_token || !stored.refresh_token) {
+      throw new Error('No valid Supabase session in storage');
+    }
 
-    // Set the session for this request
-    await supabase.auth.setSession({
-      access_token: state.accessToken!,
-      refresh_token: '', // Not needed for read
+    const { error: sessionError } = await supabase.auth.setSession({
+      access_token: stored.access_token,
+      refresh_token: stored.refresh_token,
     });
+    if (sessionError) throw sessionError;
 
     const { data, error } = await supabase
       .schema('misir')
@@ -285,11 +284,16 @@ export async function fetchSubspacesFromSupabase(
     }
 
     const supabase = getClient();
+    const stored = await loadSession();
+    if (!stored?.access_token || !stored.refresh_token) {
+      throw new Error('No valid Supabase session in storage');
+    }
 
-    await supabase.auth.setSession({
-      access_token: state.accessToken!,
-      refresh_token: '',
+    const { error: sessionError } = await supabase.auth.setSession({
+      access_token: stored.access_token,
+      refresh_token: stored.refresh_token,
     });
+    if (sessionError) throw sessionError;
 
     const { data, error } = await supabase
       .schema('misir')
@@ -319,11 +323,16 @@ export async function fetchMarkersFromSupabase(
     }
 
     const supabase = getClient();
+    const stored = await loadSession();
+    if (!stored?.access_token || !stored.refresh_token) {
+      throw new Error('No valid Supabase session in storage');
+    }
 
-    await supabase.auth.setSession({
-      access_token: state.accessToken!,
-      refresh_token: '',
+    const { error: sessionError } = await supabase.auth.setSession({
+      access_token: stored.access_token,
+      refresh_token: stored.refresh_token,
     });
+    if (sessionError) throw sessionError;
 
     const { data, error } = await supabase
       .schema('misir')

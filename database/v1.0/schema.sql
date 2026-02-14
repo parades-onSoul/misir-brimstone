@@ -760,9 +760,9 @@ BEGIN
     END;
     
     -- Validate dimension matches config
-    IF array_length(p_embedding, 1) != v_embedding_dimension THEN
+    IF vector_dims(p_embedding) != v_embedding_dimension THEN
         RAISE EXCEPTION 'embedding dimension mismatch: expected % (from system_config), got %', 
-            v_embedding_dimension, array_length(p_embedding, 1);
+            v_embedding_dimension, vector_dims(p_embedding);
     END IF;
     
     -- Normalize URL & domain
@@ -791,6 +791,13 @@ BEGIN
     )
     ON CONFLICT (user_id, normalized_url) DO UPDATE SET
         title = COALESCE(EXCLUDED.title, misir.artifact.title),
+        subspace_id = COALESCE(EXCLUDED.subspace_id, misir.artifact.subspace_id),
+        matched_marker_ids = CASE
+            WHEN EXCLUDED.matched_marker_ids IS NOT NULL
+                 AND COALESCE(array_length(EXCLUDED.matched_marker_ids, 1), 0) > 0
+                THEN EXCLUDED.matched_marker_ids
+            ELSE misir.artifact.matched_marker_ids
+        END,
         dwell_time_ms = GREATEST(misir.artifact.dwell_time_ms, EXCLUDED.dwell_time_ms),
         scroll_depth = GREATEST(misir.artifact.scroll_depth, EXCLUDED.scroll_depth),
         reading_depth = GREATEST(misir.artifact.reading_depth, EXCLUDED.reading_depth),

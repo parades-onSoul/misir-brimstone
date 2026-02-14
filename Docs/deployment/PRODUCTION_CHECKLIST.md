@@ -292,6 +292,6 @@ gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000
 
 ## 🔗 Related Documentation
 
-- [Backend Architecture](../architecture/backend.md)
-- [API Reference](../api/README.md)
+- [System Architecture](../architecture/system-overview.md)
+- [Canonical Full Project Doc](../../Tomal Docs/Misir_Full_Project_Documentation_2026-02-14.md)
 - [Database Schema](../database/README.md)

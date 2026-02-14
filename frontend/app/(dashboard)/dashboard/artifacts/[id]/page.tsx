@@ -76,7 +76,6 @@ export default function ArtifactDetailPage({ params }: { params: { id: string } 
         try {
             await updateMutation.mutateAsync({
                 artifactId: parseInt(artifact.id),
-                userId: user.id,
                 data: {
                     title: editedTitle,
                     content: editedContent,
@@ -94,7 +93,6 @@ export default function ArtifactDetailPage({ params }: { params: { id: string } 
         try {
             await deleteMutation.mutateAsync({
                 artifactId: parseInt(artifact.id),
-                userId: user.id,
             });
             router.push('/dashboard/artifacts');
         } catch (error) {

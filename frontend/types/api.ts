@@ -67,6 +67,11 @@ export interface DeleteSpaceResponse {
     deleted: boolean;
 }
 
+export interface UpdateSpaceRequest {
+    name?: string;
+    description?: string | null;
+}
+
 export interface TimelineArtifact {
     id: number;
     title: string | null;
@@ -166,6 +171,30 @@ export interface Artifact {
     reading_time_min?: number | null;
 }
 
+export interface SpaceArtifactResponse {
+    id: number;
+    title: string | null;
+    url: string;
+    domain: string;
+    created_at: string;
+    engagement_level: EngagementLevel;
+    subspace_id: number | null;
+    margin: number | null;
+    dwell_time_ms: number;
+    reading_depth?: number;
+    word_count?: number;
+    content_source?: SourceType;
+    reading_time_min?: number | null;
+    captured_at?: string | null;
+}
+
+export interface SpaceArtifactsListResponse {
+    artifacts: SpaceArtifactResponse[];
+    count: number;
+    page: number;
+    page_size: number;
+}
+
 export interface UpdateArtifactRequest {
     title?: string;
     content?: string;
@@ -188,6 +217,8 @@ export interface Subspace {
     artifacts_count?: number;
     confidence: number;
     markers: string[];
+    last_active_at?: string | null;
+    recent_artifact_count?: number | null;
     created_at: string;
     updated_at: string;
 }
@@ -444,13 +475,13 @@ export interface ProfileResponse {
     timezone: string;
     onboarding_completed: boolean;
     onboarded_at: string | null;
-    settings: Record<string, any>;
+    settings: Record<string, unknown>;
     created_at: string;
     updated_at: string;
 }
 
 export interface UpdateSettingsRequest {
-    settings: Record<string, any>;
+    settings: Record<string, unknown>;
 }
 
 export interface UpdateProfileRequest {
@@ -460,7 +491,7 @@ export interface UpdateProfileRequest {
 }
 
 // Common settings structure
-export interface UserSettings {
+export interface UserSettings extends Record<string, unknown> {
     theme?: 'light' | 'dark' | 'auto';
     density?: 'comfortable' | 'compact' | 'cozy';
     notifications_enabled?: boolean;

@@ -13,6 +13,7 @@ import type {
     DeleteSpaceResponse,
     Subspace,
     CreateSpaceRequest,
+    UpdateSpaceRequest,
     CaptureRequest,
     CaptureResponse,
     SearchResponse,
@@ -34,10 +35,13 @@ import type {
     ProfileResponse,
     UpdateSettingsRequest,
     UpdateProfileRequest,
+    PaginatedResponse,
 } from '@/types/api';
 
 // Prefer explicit v1 prefix; match FastAPI settings.API_V1_STR
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1').replace(/\/$/, '');
+const NETWORK_RETRY_ATTEMPTS = 2;
+const NETWORK_RETRY_BACKOFF_MS = 500;
 
 /**
  * API Error with RFC 9457 Problem Details
@@ -65,7 +69,8 @@ class ApiClient {
 
     private async request<T>(
         endpoint: string,
-        options: RequestInit = {}
+        options: RequestInit = {},
+        attempt: number = 0
     ): Promise<T> {
         const headers: HeadersInit = {
             'Content-Type': 'application/json',
@@ -85,13 +90,31 @@ class ApiClient {
             });
 
             if (!response.ok) {
-                const contentType = response.headers.get('content-type');
-                
-                // Try to parse RFC 9457 Problem Details
-                if (contentType?.includes('application/problem+json') || contentType?.includes('application/json')) {
-                    try {
-                        const problem = await response.json() as ProblemDetails;
-                        
+                const contentType = response.headers.get('content-type') || '';
+                const rawText = await response.text();
+
+                // Try to parse RFC 9457 Problem Details (or any JSON error body)
+                if (contentType.includes('application/problem+json') || contentType.includes('application/json')) {
+                    let parsed: Record<string, unknown> | null = null;
+                    if (rawText) {
+                        try {
+                            parsed = JSON.parse(rawText) as Record<string, unknown>;
+                        } catch {
+                            parsed = null;
+                        }
+                    }
+
+                    if (parsed) {
+                        const detailRaw = String(parsed.detail ?? parsed.message ?? rawText ?? '');
+                        const problem: ProblemDetails = {
+                            type: String(parsed.type ?? 'about:blank'),
+                            title: String(parsed.title ?? response.statusText ?? 'Request failed'),
+                            status: Number(parsed.status ?? response.status),
+                            detail: detailRaw ? detailRaw : response.statusText,
+                            instance: String(parsed.instance ?? endpoint),
+                            context: (parsed.context as Record<string, unknown> | undefined) ?? parsed,
+                        };
+
                         // Log for debugging
                         console.error('API Problem:', {
                             status: problem.status,
@@ -101,21 +124,13 @@ class ApiClient {
                             instance: problem.instance,
                             context: problem.context,
                         });
-                        
+
                         throw new ApiError(problem);
-                    } catch (parseError) {
-                        if (parseError instanceof ApiError) {
-                            throw parseError;
-                        }
-                        // Fallback for non-JSON responses
-                        const text = await response.text();
-                        throw new Error(`HTTP ${response.status}: ${text || response.statusText}`);
                     }
                 }
-                
+
                 // Fallback for non-standard error responses
-                const text = await response.text();
-                throw new Error(`HTTP ${response.status}: ${text || response.statusText}`);
+                throw new Error(`HTTP ${response.status}: ${rawText || response.statusText}`);
             }
 
             // Handle no-content responses
@@ -131,6 +146,12 @@ class ApiClient {
             }
             
             if (fetchError instanceof Error && fetchError.message.includes('Failed to fetch')) {
+                if (attempt < NETWORK_RETRY_ATTEMPTS) {
+                    const backoffMs = NETWORK_RETRY_BACKOFF_MS * (attempt + 1);
+                    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+                    return this.request<T>(endpoint, options, attempt + 1);
+                }
+
                 console.error('Network Error:', {
                     message: 'Cannot connect to backend API',
                     url: fullUrl,
@@ -150,94 +171,175 @@ class ApiClient {
     spaces = {
         /**
          * List all spaces for a user
-         * GET /spaces?user_id={userId}
+         * GET /spaces
          */
-        list: async (userId: string): Promise<SpaceListResponse> => {
-            if (!userId) {
-                throw new Error('userId is required to list spaces');
-            }
-            return this.request<SpaceListResponse>(`/spaces?user_id=${encodeURIComponent(userId)}`);
+        list: async (_userId?: string): Promise<SpaceListResponse> => {
+            void _userId; // Legacy arg kept for hook compatibility (JWT auth is server-side).
+            return this.request<SpaceListResponse>(`/spaces`);
         },
 
         /**
          * Create a new space
-         * POST /spaces?user_id={userId}
+         * POST /spaces
          */
-        create: async (data: CreateSpaceRequest, userId: string): Promise<SpaceResponse> => {
-            return this.request<SpaceResponse>(`/spaces?user_id=${encodeURIComponent(userId)}`, {
+        create: async (data: CreateSpaceRequest, _userId?: string): Promise<SpaceResponse> => {
+            void _userId;
+            return this.request<SpaceResponse>(`/spaces`, {
                 method: 'POST',
-                body: JSON.stringify({ ...data, user_id: userId }),
+                body: JSON.stringify(data),
             });
         },
 
         /**
          * Get space by ID
-         * GET /spaces/{id}?user_id={userId}
+         * GET /spaces/{id}
          */
-        get: async (spaceId: number, userId: string): Promise<SpaceResponse> => {
-            if (!userId) {
-                throw new Error('userId is required to fetch a space');
-            }
+        get: async (spaceId: number, _userId?: string): Promise<SpaceResponse> => {
+            void _userId;
             if (spaceId === undefined || spaceId === null || Number.isNaN(spaceId)) {
                 throw new Error('spaceId is required to fetch a space');
             }
-            return this.request<SpaceResponse>(`/spaces/${spaceId}?user_id=${encodeURIComponent(userId)}`);
+            return this.request<SpaceResponse>(`/spaces/${spaceId}`);
         },
 
         /**
          * Delete a space
-         * DELETE /spaces/{id}?user_id={userId}
+         * DELETE /spaces/{id}
          */
-        delete: async (spaceId: number, userId: string): Promise<DeleteSpaceResponse> => {
-            if (!userId) {
-                throw new Error('userId is required to delete a space');
-            }
+        delete: async (spaceId: number, _userId?: string): Promise<DeleteSpaceResponse> => {
+            void _userId;
             if (spaceId === undefined || spaceId === null || Number.isNaN(spaceId)) {
                 throw new Error('spaceId is required to delete a space');
             }
-            return this.request<DeleteSpaceResponse>(`/spaces/${spaceId}?user_id=${encodeURIComponent(userId)}` , {
+            return this.request<DeleteSpaceResponse>(`/spaces/${spaceId}` , {
                 method: 'DELETE',
             });
         },
 
         /**
-         * List subspaces for a space
-         * GET /spaces/{id}/subspaces?user_id={userId}
+         * Update mutable fields for a space
+         * PATCH /spaces/{id}
          */
-        getSubspaces: async (spaceId: number, userId: string): Promise<Subspace[]> => {
-            if (!userId) {
-                throw new Error('userId is required to fetch subspaces');
+        update: async (spaceId: number, _userId: string | undefined, data: UpdateSpaceRequest): Promise<SpaceResponse> => {
+            void _userId;
+            if (spaceId === undefined || spaceId === null || Number.isNaN(spaceId)) {
+                throw new Error('spaceId is required to update a space');
             }
+            return this.request<SpaceResponse>(`/spaces/${spaceId}`, {
+                method: 'PATCH',
+                body: JSON.stringify(data),
+            });
+        },
+
+        /**
+         * List subspaces for a space
+         * GET /spaces/{id}/subspaces
+         */
+        getSubspaces: async (spaceId: number, _userId?: string): Promise<Subspace[]> => {
+            void _userId;
             if (spaceId === undefined || spaceId === null || Number.isNaN(spaceId)) {
                 throw new Error('spaceId is required to fetch subspaces');
             }
-            return this.request<Subspace[]>(`/spaces/${spaceId}/subspaces?user_id=${encodeURIComponent(userId)}`);
+            return this.request<Subspace[]>(`/spaces/${spaceId}/subspaces`);
+        },
+
+        /**
+         * Create subspace (topic area)
+         * POST /spaces/{id}/subspaces
+         */
+        createSubspace: async (
+            spaceId: number,
+            data: { name: string; description?: string; markers?: string[] }
+        ): Promise<Subspace> => {
+            if (!spaceId) throw new Error('spaceId is required');
+            return this.request<Subspace>(`/spaces/${spaceId}/subspaces`, {
+                method: 'POST',
+                body: JSON.stringify(data),
+            });
+        },
+
+        /**
+         * Update subspace
+         * PATCH /spaces/{id}/subspaces/{subspaceId}
+         */
+        updateSubspace: async (
+            spaceId: number,
+            subspaceId: number,
+            data: { name?: string; description?: string }
+        ): Promise<Subspace> => {
+            if (!spaceId) throw new Error('spaceId is required');
+            if (!subspaceId) throw new Error('subspaceId is required');
+            return this.request<Subspace>(`/spaces/${spaceId}/subspaces/${subspaceId}`, {
+                method: 'PATCH',
+                body: JSON.stringify(data),
+            });
+        },
+
+        /**
+         * Delete subspace
+         * DELETE /spaces/{id}/subspaces/{subspaceId}
+         */
+        deleteSubspace: async (spaceId: number, subspaceId: number): Promise<{ deleted: boolean }> => {
+            if (!spaceId) throw new Error('spaceId is required');
+            if (!subspaceId) throw new Error('subspaceId is required');
+            return this.request<{ deleted: boolean }>(`/spaces/${spaceId}/subspaces/${subspaceId}`, {
+                method: 'DELETE',
+            });
+        },
+
+        /**
+         * Merge subspace into another subspace
+         * POST /spaces/{id}/subspaces/{subspaceId}/merge
+         */
+        mergeSubspace: async (
+            spaceId: number,
+            sourceSubspaceId: number,
+            targetSubspaceId: number
+        ): Promise<{ merged: boolean; source_subspace_id: number; target_subspace_id: number; moved_artifacts: number }> => {
+            if (!spaceId) throw new Error('spaceId is required');
+            if (!sourceSubspaceId) throw new Error('sourceSubspaceId is required');
+            if (!targetSubspaceId) throw new Error('targetSubspaceId is required');
+            return this.request<{ merged: boolean; source_subspace_id: number; target_subspace_id: number; moved_artifacts: number }>(
+                `/spaces/${spaceId}/subspaces/${sourceSubspaceId}/merge`,
+                {
+                    method: 'POST',
+                    body: JSON.stringify({ target_subspace_id: targetSubspaceId }),
+                }
+            );
         },
 
         /**
          * Get timeline for a space
-         * GET /spaces/{id}/timeline?user_id={userId}
+         * GET /spaces/{id}/timeline
          */
-        getTimeline: async (spaceId: number, userId: string): Promise<TimelineResponse> => {
-            if (!userId) throw new Error('userId is required');
-            return this.request<TimelineResponse>(`/spaces/${spaceId}/timeline?user_id=${encodeURIComponent(userId)}`);
+        getTimeline: async (spaceId: number, _userId?: string): Promise<TimelineResponse> => {
+            void _userId;
+            return this.request<TimelineResponse>(`/spaces/${spaceId}/timeline`);
         },
 
         /**
          * Get artifacts for a space (paginated)
-         * GET /spaces/{id}/artifacts?user_id={userId}&page={page}&page_size={pageSize}
+         * GET /spaces/{id}/artifacts?page={page}&page_size={pageSize}
          */
         getArtifacts: async (
             spaceId: number, 
-            userId: string, 
+            _userId?: string, 
             page: number = 1, 
             pageSize: number = 50
-        ): Promise<PaginatedResponse<Artifact>> => {
-            if (!userId) throw new Error('userId is required');
+        ): Promise<PaginatedResponse<Artifact> & { artifacts: Artifact[] }> => {
+            void _userId;
             if (!spaceId) throw new Error('spaceId is required');
-            const response = await this.request<SpaceArtifactsListResponse>(`/spaces/${spaceId}/artifacts?user_id=${encodeURIComponent(userId)}&page=${page}&page_size=${pageSize}`);
+            const response = await this.request<SpaceArtifactsListResponse>(`/spaces/${spaceId}/artifacts?page=${page}&page_size=${pageSize}`);
+            const artifacts = response.artifacts.map((artifact) => ({
+                ...artifact,
+                // Space artifacts endpoint is JWT-scoped and does not include user_id.
+                // Keep compatibility with Artifact shape expected by existing UI.
+                user_id: '',
+                space_id: spaceId,
+            }));
             return {
-                items: response.artifacts,
+                items: artifacts,
+                artifacts,
                 count: response.count,
                 page: response.page,
                 page_size: response.page_size,
@@ -246,12 +348,12 @@ class ApiClient {
 
         /**
          * Get alerts for a space
-         * GET /spaces/{id}/alerts?user_id={userId}
+         * GET /spaces/{id}/alerts
          */
-        getAlerts: async (spaceId: number, userId: string): Promise<SpaceAlertsResponse> => {
-            if (!userId) throw new Error('userId is required');
+        getAlerts: async (spaceId: number, _userId?: string): Promise<SpaceAlertsResponse> => {
+            void _userId;
             if (!spaceId) throw new Error('spaceId is required');
-            return this.request<SpaceAlertsResponse>(`/spaces/${spaceId}/alerts?user_id=${encodeURIComponent(userId)}`);
+            return this.request<SpaceAlertsResponse>(`/spaces/${spaceId}/alerts`);
         },
     };
 
@@ -262,7 +364,7 @@ class ApiClient {
      * POST /capture
      */
     capture = async (data: CaptureRequest): Promise<CaptureResponse> => {
-        return this.request<CaptureResponse>('/capture', {
+        return this.request<CaptureResponse>('/artifacts/capture', {
             method: 'POST',
             body: JSON.stringify(data),
         });
@@ -297,26 +399,25 @@ class ApiClient {
 
     artifacts = {
         /**
-         * List artifacts for a user
-         * GET /artifacts?user_id={userId}&limit={limit}
+         * List recent artifacts for the authenticated user
+         * GET /artifacts?limit={limit}
          */
-        list: async (userId: string, limit: number = 50): Promise<Artifact[]> => {
-            if (!userId) {
-                throw new Error('userId is required to list artifacts');
-            }
-            return this.request<Artifact[]>(`/artifacts?user_id=${encodeURIComponent(userId)}&limit=${limit}`);
+        list: async (limit: number = 50): Promise<Artifact[]> => {
+            const normalizedLimit = Number.isFinite(limit)
+                ? Math.min(1000, Math.max(1, Math.floor(limit)))
+                : 50;
+            return this.request<Artifact[]>(`/artifacts?limit=${normalizedLimit}`);
         },
 
         /**
          * Update artifact fields
-         * PATCH /artifacts/{id}?user_id={userId}
+         * PATCH /artifacts/{id}
          */
         update: async (
             artifactId: number,
-            userId: string,
             data: UpdateArtifactRequest
         ): Promise<{ message: string }> => {
-            return this.request(`/artifacts/${artifactId}?user_id=${encodeURIComponent(userId)}`, {
+            return this.request(`/artifacts/${artifactId}`, {
                 method: 'PATCH',
                 body: JSON.stringify(data),
             });
@@ -324,10 +425,10 @@ class ApiClient {
 
         /**
          * Soft-delete an artifact
-         * DELETE /artifacts/{id}?user_id={userId}
+         * DELETE /artifacts/{id}
          */
-        delete: async (artifactId: number, userId: string): Promise<{ message: string }> => {
-            return this.request(`/artifacts/${artifactId}?user_id=${encodeURIComponent(userId)}`, {
+        delete: async (artifactId: number): Promise<{ message: string }> => {
+            return this.request(`/artifacts/${artifactId}`, {
                 method: 'DELETE',
             });
         },
@@ -338,60 +439,46 @@ class ApiClient {
     analytics = {
         /**
          * Get space analytics
-         * GET /spaces/{id}/analytics?user_id={userId}
+         * GET /spaces/{id}/analytics
          */
-        space: async (spaceId: number, userId: string): Promise<AnalyticsResponse> => {
-            if (!userId) {
-                throw new Error('userId is required to fetch analytics');
-            }
-            return this.request<AnalyticsResponse>(`/spaces/${spaceId}/analytics?user_id=${encodeURIComponent(userId)}`);
+        space: async (spaceId: number): Promise<AnalyticsResponse> => {
+            return this.request<AnalyticsResponse>(`/spaces/${spaceId}/analytics`);
         },
 
         /**
          * Get space topology
          * GET /spaces/{id}/topology
          */
-        topology: async (spaceId: number, userId: string): Promise<TopologyResponse> => {
-             if (!userId) {
-                throw new Error('userId is required to fetch topology');
-            }
-            return this.request<TopologyResponse>(`/spaces/${spaceId}/topology?user_id=${encodeURIComponent(userId)}`);
+        topology: async (spaceId: number): Promise<TopologyResponse> => {
+            return this.request<TopologyResponse>(`/spaces/${spaceId}/topology`);
         },
 
-        drift: async (spaceId: number, userId: string): Promise<DriftEvent[]> => {
-             if (!userId) { throw new Error('userId required'); }
-            return this.request<DriftEvent[]>(`/spaces/${spaceId}/analytics/drift?user_id=${encodeURIComponent(userId)}`);
+        drift: async (spaceId: number): Promise<DriftEvent[]> => {
+            return this.request<DriftEvent[]>(`/spaces/${spaceId}/analytics/drift`);
         },
 
-        velocity: async (spaceId: number, userId: string): Promise<VelocityPoint[]> => {
-             if (!userId) { throw new Error('userId required'); }
-            return this.request<VelocityPoint[]>(`/spaces/${spaceId}/analytics/velocity?user_id=${encodeURIComponent(userId)}`);
+        velocity: async (spaceId: number): Promise<VelocityPoint[]> => {
+            return this.request<VelocityPoint[]>(`/spaces/${spaceId}/analytics/velocity`);
         },
 
-        confidence: async (spaceId: number, userId: string): Promise<ConfidencePoint[]> => {
-             if (!userId) { throw new Error('userId required'); }
-            return this.request<ConfidencePoint[]>(`/spaces/${spaceId}/analytics/confidence?user_id=${encodeURIComponent(userId)}`);
+        confidence: async (spaceId: number): Promise<ConfidencePoint[]> => {
+            return this.request<ConfidencePoint[]>(`/spaces/${spaceId}/analytics/confidence`);
         },
 
-        marginDistribution: async (spaceId: number, userId: string): Promise<MarginDistribution> => {
-             if (!userId) { throw new Error('userId required'); }
-            return this.request<MarginDistribution>(`/spaces/${spaceId}/analytics/margin_distribution?user_id=${encodeURIComponent(userId)}`);
+        marginDistribution: async (spaceId: number): Promise<MarginDistribution> => {
+            return this.request<MarginDistribution>(`/spaces/${spaceId}/analytics/margin_distribution`);
         },
 
-        alerts: async (spaceId: number, userId: string): Promise<SmartAlert[]> => {
-             if (!userId) { throw new Error('userId required'); }
-            return this.request<SmartAlert[]>(`/spaces/${spaceId}/analytics/alerts?user_id=${encodeURIComponent(userId)}`);
+        alerts: async (spaceId: number): Promise<SmartAlert[]> => {
+            return this.request<SmartAlert[]>(`/spaces/${spaceId}/analytics/alerts`);
         },
 
         /**
          * Get global analytics
-         * GET /analytics/global?user_id={userId}
+         * GET /analytics/global
          */
-        global: async (userId: string): Promise<GlobalAnalyticsResult> => {
-            if (!userId) {
-                throw new Error('userId is required to fetch global analytics');
-            }
-            return this.request<GlobalAnalyticsResult>(`/analytics/global?user_id=${encodeURIComponent(userId)}`);
+        global: async (): Promise<GlobalAnalyticsResult> => {
+            return this.request<GlobalAnalyticsResult>(`/analytics/global`);
         }
     };
 
@@ -400,25 +487,21 @@ class ApiClient {
     profile = {
         /**
          * Get user profile
-         * GET /profile?user_id={userId}
+         * GET /profile
          */
-        get: async (userId: string): Promise<ProfileResponse> => {
-            if (!userId) {
-                throw new Error('userId is required to fetch profile');
-            }
-            return this.request<ProfileResponse>(`/profile?user_id=${encodeURIComponent(userId)}`);
+        get: async (_userId?: string): Promise<ProfileResponse> => {
+            void _userId;
+            return this.request<ProfileResponse>(`/profile`);
         },
 
         /**
          * Update user settings
-         * PATCH /profile?user_id={userId}
+         * PATCH /profile
          */
-        updateSettings: async (userId: string, settings: Record<string, any>): Promise<ProfileResponse> => {
-            if (!userId) {
-                throw new Error('userId is required to update settings');
-            }
+        updateSettings: async (_userId: string | undefined, settings: Record<string, unknown>): Promise<ProfileResponse> => {
+            void _userId;
             const body: UpdateSettingsRequest = { settings };
-            return this.request<ProfileResponse>(`/profile?user_id=${encodeURIComponent(userId)}`, {
+            return this.request<ProfileResponse>(`/profile`, {
                 method: 'PATCH',
                 body: JSON.stringify(body),
             });
@@ -426,26 +509,22 @@ class ApiClient {
 
         /**
          * Mark user as onboarded
-         * POST /profile/onboard?user_id={userId}
+         * POST /profile/onboard
          */
-        markOnboarded: async (userId: string): Promise<ProfileResponse> => {
-            if (!userId) {
-                throw new Error('userId is required to mark onboarded');
-            }
-            return this.request<ProfileResponse>(`/profile/onboard?user_id=${encodeURIComponent(userId)}`, {
+        markOnboarded: async (_userId?: string): Promise<ProfileResponse> => {
+            void _userId;
+            return this.request<ProfileResponse>(`/profile/onboard`, {
                 method: 'POST',
             });
         },
 
         /**
          * Update profile metadata
-         * PATCH /profile/metadata?user_id={userId}
+         * PATCH /profile/metadata
          */
-        updateMetadata: async (userId: string, data: UpdateProfileRequest): Promise<ProfileResponse> => {
-            if (!userId) {
-                throw new Error('userId is required to update profile');
-            }
-            return this.request<ProfileResponse>(`/profile/metadata?user_id=${encodeURIComponent(userId)}`, {
+        updateMetadata: async (_userId: string | undefined, data: UpdateProfileRequest): Promise<ProfileResponse> => {
+            void _userId;
+            return this.request<ProfileResponse>(`/profile/metadata`, {
                 method: 'PATCH',
                 body: JSON.stringify(data),
             });
@@ -457,21 +536,17 @@ class ApiClient {
     /**
      * Get user insights
      */
-    getInsights = async (userId: string, status = 'active', limit = 5): Promise<Insight[]> => {
-        if (!userId) {
-             throw new Error('userId is required to fetch insights');
-        }
-        return this.request<Insight[]>(`/insights?user_id=${encodeURIComponent(userId)}&status=${status}&limit=${limit}`);
+    getInsights = async (_userId: string | undefined, status = 'active', limit = 5): Promise<Insight[]> => {
+        void _userId;
+        return this.request<Insight[]>(`/insights?status=${status}&limit=${limit}`);
     };
 
     /**
      * Trigger insight generation
      */
-    generateInsights = async (userId: string): Promise<{ count: number }> => {
-        if (!userId) {
-             throw new Error('userId is required to generate insights');
-        }
-        return this.request<{ count: number }>(`/insights/generate?user_id=${encodeURIComponent(userId)}`, {
+    generateInsights = async (_userId?: string): Promise<{ count: number }> => {
+        void _userId;
+        return this.request<{ count: number }>(`/insights/generate`, {
             method: 'POST',
         });
     };

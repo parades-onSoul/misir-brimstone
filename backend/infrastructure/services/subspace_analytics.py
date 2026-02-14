@@ -4,7 +4,7 @@ Subspace Analytics Service — Handles drift detection, velocity tracking, and c
 import logging
 import numpy as np
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from core.config import get_settings
 from domain.entities.analytics import SubspaceVelocity, SubspaceDrift
@@ -31,7 +31,6 @@ class SubspaceAnalyticsService:
         """
         config = get_settings()
         self.drift_threshold = drift_threshold if drift_threshold is not None else config.DRIFT_THRESHOLD
-        self.drift_threshold = drift_threshold
     
     def calculate_drift(
         self,

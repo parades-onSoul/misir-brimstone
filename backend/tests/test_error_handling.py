@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from unittest.mock import Mock, AsyncMock, patch
 
 from main import app
+from interfaces.api.spaces import get_current_user as get_spaces_current_user
 from core.error_types import (
     DomainError,
     ErrorDetail,
@@ -74,12 +75,13 @@ class TestErrorHandlers:
     def test_create_problem_response(self):
         """Test creating a Problem response from ErrorDetail."""
         error = not_found_error("Space", 123)
-        problem = create_problem_response(error, "/api/v1/spaces/123")
-        
-        assert problem.status == 404
-        assert problem.type == DomainError.NOT_FOUND
-        assert "123" in problem.detail
-        assert "Space" in problem.detail
+        response = create_problem_response(error, "/api/v1/spaces/123")
+
+        assert response.status_code == 404
+        body = response.body.decode("utf-8")
+        assert DomainError.NOT_FOUND in body
+        assert "123" in body
+        assert "Space" in body
 
 
 class TestAPIErrorResponses:
@@ -88,7 +90,11 @@ class TestAPIErrorResponses:
     @pytest.fixture
     def client(self):
         """Create test client."""
-        return TestClient(app)
+        app.dependency_overrides[get_spaces_current_user] = lambda: "test-user-id"
+        try:
+            yield TestClient(app)
+        finally:
+            app.dependency_overrides.pop(get_spaces_current_user, None)
     
     def test_health_endpoint(self, client):
         """Test health endpoint works."""

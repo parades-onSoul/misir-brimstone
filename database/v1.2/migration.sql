@@ -176,6 +176,13 @@ BEGIN
         UPDATE misir.artifact SET
             title = COALESCE(p_title, title),
             extracted_text = COALESCE(p_content, extracted_text),
+            subspace_id = COALESCE(p_subspace_id, subspace_id),
+            matched_marker_ids = CASE
+                WHEN p_matched_marker_ids IS NOT NULL
+                     AND COALESCE(array_length(p_matched_marker_ids, 1), 0) > 0
+                    THEN p_matched_marker_ids
+                ELSE matched_marker_ids
+            END,
             word_count = GREATEST(word_count, p_word_count),
             engagement_level = CASE 
                 WHEN misir.engagement_level_order(p_engagement_level) > misir.engagement_level_order(engagement_level)

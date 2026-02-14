@@ -34,6 +34,32 @@ class CaptureResult:
     message: str
 
 
+def _normalize_engagement_level(level: str) -> str:
+    """Map legacy/client engagement levels to current DB enum values."""
+    value = (level or "").strip().lower()
+    mapping = {
+        "ambient": "latent",
+        "active": "engaged",
+        "committed": "saturated",
+    }
+    if value in {"latent", "discovered", "engaged", "saturated"}:
+        return value
+    return mapping.get(value, "latent")
+
+
+def _normalize_content_source(source: str) -> str:
+    """Map legacy/client content sources to current DB enum values."""
+    value = (source or "").strip().lower()
+    mapping = {
+        "ai": "chat",
+        "document": "pdf",
+        "ebook": "pdf",
+    }
+    if value in {"web", "pdf", "video", "chat", "note", "other"}:
+        return value
+    return mapping.get(value, "web")
+
+
 class ArtifactRepository:
     """
     Repository for artifact operations.
@@ -61,6 +87,9 @@ class ArtifactRepository:
             Result[CaptureResult, ErrorDetail]: Success with capture result or error
         """
         try:
+            normalized_engagement = _normalize_engagement_level(cmd.engagement_level)
+            normalized_source = _normalize_content_source(cmd.content_source)
+
             # Build RPC params (order matches new function signature)
             params = {
                 # Required params first
@@ -74,8 +103,8 @@ class ArtifactRepository:
                 'p_session_id': cmd.session_id,
                 'p_title': cmd.title,
                 'p_content': cmd.content,
-                'p_engagement_level': cmd.engagement_level,
-                'p_content_source': cmd.content_source,
+                'p_engagement_level': normalized_engagement,
+                'p_content_source': normalized_source,
                 'p_dwell_time_ms': cmd.dwell_time_ms,
                 'p_scroll_depth': cmd.scroll_depth,
                 'p_reading_depth': cmd.reading_depth,
@@ -101,6 +130,12 @@ class ArtifactRepository:
             
             if response.data and len(response.data) > 0:
                 row = response.data[0]
+                await self._backfill_assignment_fields(
+                    artifact_id=row['artifact_id'],
+                    user_id=cmd.user_id,
+                    subspace_id=cmd.subspace_id,
+                    matched_marker_ids=list(cmd.matched_marker_ids),
+                )
                 return Ok(CaptureResult(
                     artifact_id=row['artifact_id'],
                     signal_id=row['signal_id'],
@@ -116,12 +151,60 @@ class ArtifactRepository:
                 
         except Exception as e:
             logger.error(f"ingest_with_signal failed: {e}", exc_info=e)
+            error_text = str(e)
+            if "array_length(vector, integer) does not exist" in error_text:
+                return Err(repository_error(
+                    "Database RPC is outdated for pgvector. "
+                    "Run database/v1.4/rpc-function-fix.sql (or replace array_length(p_embedding, 1) "
+                    "with vector_dims(p_embedding) in misir.insert_artifact_with_signal).",
+                    operation="ingest_artifact",
+                    user_id=cmd.user_id,
+                    error=error_text
+                ))
             return Err(repository_error(
-                f"Failed to ingest artifact: {str(e)}",
+                f"Failed to ingest artifact: {error_text}",
                 operation="ingest_artifact",
                 user_id=cmd.user_id,
-                error=str(e)
+                error=error_text
             ))
+
+    async def _backfill_assignment_fields(
+        self,
+        *,
+        artifact_id: int,
+        user_id: str,
+        subspace_id: Optional[int],
+        matched_marker_ids: list[int],
+    ) -> None:
+        """
+        Best-effort assignment backfill for URL upsert collisions.
+
+        The RPC may update an existing artifact row where subspace/markers were
+        previously null. This keeps UI topic stats in sync even when URLs repeat.
+        """
+        update_data: dict[str, object] = {}
+        if isinstance(subspace_id, int) and subspace_id > 0:
+            update_data["subspace_id"] = subspace_id
+        if matched_marker_ids:
+            update_data["matched_marker_ids"] = matched_marker_ids
+        if not update_data:
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+            update_call = partial(
+                self._client.schema('misir')
+                .from_('artifact')
+                .update(update_data)
+                .eq('id', artifact_id)
+                .eq('user_id', user_id)
+                .execute
+            )
+            await loop.run_in_executor(None, update_call)
+        except Exception as backfill_error:
+            logger.warning(
+                f"Assignment backfill skipped for artifact {artifact_id}: {backfill_error}"
+            )
     
     async def find_by_id(self, artifact_id: int) -> Result[dict, ErrorDetail]:
         """Find artifact by ID.
@@ -377,15 +460,40 @@ class ArtifactRepository:
             
             flat_data = []
             for item in response.data or []:
-                signal = item.get("signal") or {}
-                margin = signal.get("margin") if isinstance(signal, dict) else None
+                signal = item.get("signal")
+                margin = None
+                if isinstance(signal, dict):
+                    value = signal.get("margin")
+                    margin = float(value) if isinstance(value, (int, float)) else None
+                elif isinstance(signal, list):
+                    for signal_item in signal:
+                        if not isinstance(signal_item, dict):
+                            continue
+                        value = signal_item.get("margin")
+                        if isinstance(value, (int, float)):
+                            margin = float(value)
+                            break
+
+                space_name = "Unknown"
+                space = item.get("space")
+                if isinstance(space, dict):
+                    name = space.get("name")
+                    if isinstance(name, str) and name:
+                        space_name = name
+                elif isinstance(space, list) and space:
+                    first = space[0]
+                    if isinstance(first, dict):
+                        name = first.get("name")
+                        if isinstance(name, str) and name:
+                            space_name = name
+
                 if margin is not None:  # Only include artifacts with margin
                     flat_item = {
                         "id": item.get("id"),
                         "title": item.get("title"),
                         "created_at": item.get("created_at"),
                         "margin": margin,
-                        "space_name": item.get("space", {}).get("name") if item.get("space") else "Unknown"
+                        "space_name": space_name,
                     }
                     flat_data.append(flat_item)
             

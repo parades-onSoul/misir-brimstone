@@ -6,7 +6,7 @@ Endpoints:
 - DELETE /artifacts/{id}
 - PATCH /artifacts/{id}
 """
-from fastapi import APIRouter, HTTPException, Depends, Request, Query
+from fastapi import APIRouter, HTTPException, Depends, Request, Query, Header
 from fastapi_problem.error import Problem
 from pydantic import BaseModel
 from typing import Optional, List
@@ -19,6 +19,7 @@ from domain.commands import UpdateArtifactCommand, DeleteArtifactCommand
 from application.handlers.artifact_handler import ArtifactHandler
 from infrastructure.repositories import ArtifactRepository
 from infrastructure.repositories.base import get_supabase_client
+from infrastructure.services.content_classifier import classify_content
 
 router = APIRouter()
 
@@ -42,24 +43,123 @@ class ArtifactResponse(BaseModel):
     space_id: int
 
 
+class ClassifyPageRequest(BaseModel):
+    url: str
+    title: str = ""
+    content: str = ""
+    wordCount: int = 0
+    domain: Optional[str] = None
+
+
+class ClassifyMetricsRequest(BaseModel):
+    dwellTimeMs: int = 0
+    scrollDepth: float = 0.0
+    readingDepth: float = 0.0
+    scrollEvents: int = 0
+
+
+class ClassifyContentRequest(BaseModel):
+    page: ClassifyPageRequest
+    metrics: ClassifyMetricsRequest
+    engagement: str = "latent"
+
+
+class ClassifyContentResponse(BaseModel):
+    engagementLevel: str
+    contentSource: str
+    contentType: str
+    readingDepth: float
+    confidence: float
+    keywords: list[str]
+    nlpAvailable: bool
+
+
+class ClassifierStatusResponse(BaseModel):
+    available: bool
+    mode: str
+
+
 def get_artifact_handler(client: Client = Depends(get_supabase_client)) -> ArtifactHandler:
     """Dependency for ArtifactHandler."""
     repo = ArtifactRepository(client)
     return ArtifactHandler(repo)
 
+def get_current_user(
+    authorization: str = Header(None),
+    client: Client = Depends(get_supabase_client)
+) -> str:
+    """
+    Extract user_id from JWT token and validate with Supabase.
+    """
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="Authorization header required")
+
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Invalid authorization format")
+
+        token = authorization.split(" ")[1]
+        user = client.auth.get_user(token)
+        if not user or not user.user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        return user.user.id
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {e}")
+
+
+@router.get("/classify/status", response_model=ClassifierStatusResponse)
+@limiter.limit("100/minute")
+async def get_classifier_status(
+    request: Request,
+    _current_user_id: str = Depends(get_current_user),
+):
+    """
+    Return backend classifier availability.
+    """
+    return ClassifierStatusResponse(available=True, mode="backend-heuristic")
+
+
+@router.post("/classify", response_model=ClassifyContentResponse)
+@limiter.limit("200/minute")
+async def classify_artifact_content(
+    request: Request,
+    body: ClassifyContentRequest,
+    _current_user_id: str = Depends(get_current_user),
+):
+    """
+    Classify page content server-side.
+
+    Used by the extension to avoid in-worker NLP/model bundles.
+    """
+    result = classify_content(
+        url=body.page.url,
+        title=body.page.title,
+        content=body.page.content,
+        word_count=max(0, body.page.wordCount),
+        dwell_time_ms=max(0, body.metrics.dwellTimeMs),
+        scroll_depth=max(0.0, min(1.0, body.metrics.scrollDepth)),
+        reading_depth=max(0.0, min(1.5, body.metrics.readingDepth)),
+        engagement=body.engagement,
+    )
+    return ClassifyContentResponse(**result)
+
+
 @router.get("", response_model=List[ArtifactResponse])
 @limiter.limit("50/minute")
 async def list_artifacts(
     request: Request,
-    user_id: str,
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=1000),
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client)
 ):
     """
     List recent artifacts across all spaces.
     """
     repo = ArtifactRepository(client)
-    result = await repo.get_all_by_user(user_id, limit)
+    result = await repo.get_all_by_user(current_user_id, limit)
     
     if result.is_err():
         return create_problem_response(result.unwrap_err())
@@ -73,7 +173,7 @@ async def update_artifact(
     request: Request,
     artifact_id: int,
     body: UpdateArtifactRequest,
-    user_id: str, # TODO: Extract from auth token in production
+    current_user_id: str = Depends(get_current_user),
     handler: ArtifactHandler = Depends(get_artifact_handler)
 ):
     """
@@ -88,7 +188,7 @@ async def update_artifact(
     """
     cmd = UpdateArtifactCommand(
         artifact_id=artifact_id,
-        user_id=user_id,
+        user_id=current_user_id,
         title=body.title,
         content=body.content,
         engagement_level=body.engagement_level,
@@ -100,7 +200,7 @@ async def update_artifact(
     # Convert Result to HTTP response
     if result.is_err():
         error = result.unwrap_err()
-        raise create_problem_response(error, str(request.url.path))
+        return create_problem_response(error, str(request.url.path))
     
     updated = result.unwrap()
     if not updated:
@@ -119,7 +219,7 @@ async def update_artifact(
 async def delete_artifact(
     request: Request,
     artifact_id: int,
-    user_id: str, # TODO: Extract from auth token
+    current_user_id: str = Depends(get_current_user),
     handler: ArtifactHandler = Depends(get_artifact_handler)
 ):
     """
@@ -131,7 +231,7 @@ async def delete_artifact(
     """
     cmd = DeleteArtifactCommand(
         artifact_id=artifact_id,
-        user_id=user_id
+        user_id=current_user_id
     )
     
     result = await handler.delete(cmd)
@@ -139,7 +239,7 @@ async def delete_artifact(
     # Convert Result to HTTP response
     if result.is_err():
         error = result.unwrap_err()
-        raise create_problem_response(error, str(request.url.path))
+        return create_problem_response(error, str(request.url.path))
     
     deleted = result.unwrap()
     if not deleted:

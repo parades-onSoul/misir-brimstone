@@ -6,10 +6,11 @@ from core.config import settings
 
 
 def get_supabase_client() -> Client:
-    """Create Supabase client instance."""
+    """Create Supabase client instance for server-side repository operations."""
     return create_client(
         settings.SUPABASE_URL,
-        settings.SUPABASE_KEY
+        # Server-side writes must use service role to avoid RLS blocking backend RPCs.
+        settings.SUPABASE_SERVICE_KEY or settings.SUPABASE_KEY
     )
 
 

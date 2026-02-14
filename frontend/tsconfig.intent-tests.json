@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": ".tmp-tests",
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": [
+    "lib/ai/groq-prompts.ts",
+    "lib/ai/validation.ts",
+    "tests/intent-classifier.test.ts",
+    "tests/groq-validation.test.ts"
+  ]
+}

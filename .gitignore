@@ -56,8 +56,6 @@ next-env.d.ts
 # Build outputs
 /build
 /dist
-*.min.js
-*.min.css
 
 # Extension build
 extension/dist/

@@ -267,7 +267,7 @@ async def find_by_id(id: int) -> Result[Resource, ErrorDetail]:
     return Ok(Resource.from_dict(data))
 ```
 
-See [ERROR_HANDLING.md](../Docs/development/ERROR_HANDLING.md) for complete guide.
+See [ERROR_HANDLING.md](./ERROR_HANDLING.md) for complete guide.
 
 ---
 

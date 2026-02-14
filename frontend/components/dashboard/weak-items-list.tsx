@@ -29,7 +29,7 @@ export function WeakItemsList() {
             <div className="bg-[#141517] border border-white/5 rounded-lg p-6">
                 <h3 className="text-sm font-medium text-[#EEEEF0] mb-4">Items Needing Review</h3>
                 <div className="text-sm text-[#8A8F98] border border-dashed border-white/10 p-8 rounded-lg text-center">
-                    All your items fit well into their spaces. Great work! 🎉
+                    All your items fit well into their spaces. Great work.
                 </div>
             </div>
         );
@@ -58,7 +58,7 @@ export function WeakItemsList() {
                         </div>
                         <div className="flex items-center gap-2 text-xs text-[#8A8F98]">
                             <span className="px-2 py-0.5 bg-white/5 rounded">{item.space_name}</span>
-                            <span>•</span>
+                            <span>|</span>
                             <span>{new Date(item.created_at).toLocaleDateString()}</span>
                         </div>
                     </div>
@@ -68,7 +68,7 @@ export function WeakItemsList() {
             {data.weak_items.length > 0 && (
                 <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
                     <p className="text-xs text-amber-500">
-                        💡 These items don't fit their spaces well. Consider creating new topic areas or reassigning them.
+                        These items do not fit their spaces well. Consider creating new topic areas or reassigning them.
                     </p>
                 </div>
             )}

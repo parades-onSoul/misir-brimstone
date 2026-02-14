@@ -13,10 +13,12 @@ export function useCaptureArtifact() {
     return useMutation({
         mutationFn: (data: CaptureRequest) => api.capture(data),
         onSuccess: (response: CaptureResponse) => {
-            // Invalidate spaces to update artifact count
+            // Refresh all capture-dependent views.
             queryClient.invalidateQueries({ queryKey: ['spaces'] });
+            queryClient.invalidateQueries({ queryKey: ['subspaces'] });
+            queryClient.invalidateQueries({ queryKey: ['artifacts'] });
+            queryClient.invalidateQueries({ queryKey: ['analytics'] });
             
-            // Could also invalidate search results if needed
             if (response.is_new) {
                 queryClient.invalidateQueries({ queryKey: ['search'] });
             }
@@ -30,13 +32,11 @@ export function useUpdateArtifact() {
     return useMutation({
         mutationFn: ({ 
             artifactId, 
-            userId, 
             data 
         }: { 
             artifactId: number; 
-            userId: string; 
             data: UpdateArtifactRequest
-        }) => api.artifacts.update(artifactId, userId, data),
+        }) => api.artifacts.update(artifactId, data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['artifacts'] });
         },
@@ -47,8 +47,8 @@ export function useDeleteArtifact() {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: ({ artifactId, userId }: { artifactId: number; userId: string }) => 
-            api.artifacts.delete(artifactId, userId),
+        mutationFn: ({ artifactId }: { artifactId: number }) => 
+            api.artifacts.delete(artifactId),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['artifacts'] });
             queryClient.invalidateQueries({ queryKey: ['spaces'] });

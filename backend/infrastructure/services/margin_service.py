@@ -10,6 +10,7 @@ If margin < threshold, the signal is stored but does NOT update the centroid.
 from dataclasses import dataclass
 from typing import Optional
 import logging
+import math
 
 from supabase import Client
 from core.config_cache import config_cache
@@ -45,6 +46,21 @@ class AssignmentMarginService:
     
     def __init__(self, client: Client):
         self._client = client
+
+    @staticmethod
+    def _truncate_and_normalize(vector: list[float], target_dim: int) -> list[float]:
+        if target_dim <= 0:
+            raise ValueError("target_dim must be > 0")
+        if len(vector) < target_dim:
+            raise ValueError(
+                f"Cannot truncate vector of length {len(vector)} to {target_dim}"
+            )
+
+        truncated = [float(value) for value in vector[:target_dim]]
+        norm = math.sqrt(sum(v * v for v in truncated))
+        if norm > 0:
+            truncated = [v / norm for v in truncated]
+        return truncated
     
     @staticmethod
     def calculate_margin_value(d1: float, d2: float) -> float:
@@ -53,7 +69,7 @@ class AssignmentMarginService:
     
     def get_threshold(self) -> float:
         """Get margin threshold from config."""
-        return float(config_cache.get('assignment_margin_threshold', 0.1))
+        return float(config_cache.get('assignment_margin_threshold', 0.05))
     
     async def calculate_margin(
         self,
@@ -70,7 +86,34 @@ class AssignmentMarginService:
         threshold = self.get_threshold()
         
         try:
-            # Use RPC function if available
+            # Prefer Matryoshka RPC when available.
+            signal_vector_384 = self._truncate_and_normalize(signal_vector, 384)
+            response = self._client.schema('misir').rpc(
+                'calculate_assignment_margin_matryoshka',
+                {
+                    'p_signal_vector_384': signal_vector_384,
+                    'p_signal_vector_768': signal_vector,
+                    'p_user_id': user_id,
+                    'p_space_id': space_id
+                }
+            ).execute()
+
+            if response.data and len(response.data) > 0:
+                row = response.data[0]
+                return MarginResult(
+                    nearest_subspace_id=row['nearest_subspace_id'],
+                    nearest_distance=row['nearest_distance'] or 0.0,
+                    second_distance=row['second_distance'] or 1.0,
+                    margin=row['margin'] or 1.0,
+                    updates_centroid=row['updates_centroid']
+                )
+        except Exception as e:
+            logger.warning(
+                f"Matryoshka RPC calculate_assignment_margin failed: {e}, using legacy RPC"
+            )
+
+        try:
+            # Legacy RPC fallback
             response = self._client.schema('misir').rpc(
                 'calculate_assignment_margin',
                 {
@@ -90,7 +133,7 @@ class AssignmentMarginService:
                     updates_centroid=row['updates_centroid']
                 )
         except Exception as e:
-            logger.warning(f"RPC calculate_assignment_margin failed: {e}, using fallback")
+            logger.warning(f"Legacy RPC calculate_assignment_margin failed: {e}, using local fallback")
         
         # Fallback: query subspaces directly
         return await self._calculate_margin_fallback(

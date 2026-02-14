@@ -4,6 +4,10 @@
  * Implements natural language labels per terminology translation table
  */
 import type { EngagementLevel } from '@/types/api';
+import {
+    FOCUS_CONFIDENCE_HIGH_THRESHOLD,
+    FOCUS_CONFIDENCE_MEDIUM_THRESHOLD,
+} from '@/lib/focus-thresholds';
 
 /**
  * Converts confidence score (0-1) to natural language focus label
@@ -11,9 +15,9 @@ import type { EngagementLevel } from '@/types/api';
  * @returns "Very strong" | "Strong" | "Moderate" | "Developing" | "Just starting"
  */
 export function getFocusLabel(confidence: number): string {
-    if (confidence >= 0.8) return 'Very strong';
-    if (confidence >= 0.6) return 'Strong';
-    if (confidence >= 0.4) return 'Moderate';
+    if (confidence >= 0.75) return 'Very strong';
+    if (confidence >= FOCUS_CONFIDENCE_HIGH_THRESHOLD) return 'Strong';
+    if (confidence >= FOCUS_CONFIDENCE_MEDIUM_THRESHOLD) return 'Moderate';
     if (confidence >= 0.2) return 'Developing';
     return 'Just starting';
 }
@@ -91,7 +95,7 @@ export function getSpaceStatus(metrics: {
     }
 
     // High confidence + low drift = stable
-    if (confidence > 0.7 && (drift === undefined || drift < 0.2)) {
+    if (confidence > FOCUS_CONFIDENCE_HIGH_THRESHOLD && (drift === undefined || drift < 0.2)) {
         return 'Looking good ✅';
     }
 

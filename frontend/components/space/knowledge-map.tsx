@@ -17,6 +17,10 @@ import { RotateCcw, ZoomIn, ZoomOut, Maximize2, Minimize2, SlidersHorizontal, Pl
 import { useSpaceTopology } from '@/lib/api/analytics';
 import { TopologyNode, TopologySnapshot } from '@/types/api';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+    FOCUS_CONFIDENCE_HIGH_THRESHOLD,
+    FOCUS_CONFIDENCE_MEDIUM_THRESHOLD,
+} from '@/lib/focus-thresholds';
 
 type ActivityFilter = 'all' | 'low' | 'medium' | 'high';
 type DateRangeFilter = 'all' | '7d' | '30d' | '90d';
@@ -84,9 +88,8 @@ export function KnowledgeMap({ spaceId, userId, className, onNodeClick }: Knowle
   const [isFullscreen, setIsFullscreen] = useState(false);
     const [filters, setFilters] = useState<MapFilters>(MAP_FILTER_DEFAULTS);
     const [filtersOpen, setFiltersOpen] = useState(false);
-    const [activeSnapshotIndex, setActiveSnapshotIndex] = useState(0);
+    const [activeSnapshotIndex, setActiveSnapshotIndex] = useState(-1);
     const [isPlaying, setIsPlaying] = useState(false);
-    const timelineInitializedRef = useRef(false);
 
     const snapshots = useMemo(() => {
         if (!topology) return [] as TopologySnapshot[];
@@ -104,11 +107,16 @@ export function KnowledgeMap({ spaceId, userId, className, onNodeClick }: Knowle
 
     const fallbackNodes = useMemo(() => topology?.nodes ?? [], [topology]);
 
+    const effectiveSnapshotIndex = useMemo(() => {
+        if (!snapshots.length) return 0;
+        if (activeSnapshotIndex < 0) return snapshots.length - 1;
+        return Math.min(activeSnapshotIndex, snapshots.length - 1);
+    }, [activeSnapshotIndex, snapshots.length]);
+
     const currentNodes = useMemo(() => {
         if (!snapshots.length) return fallbackNodes;
-        const safeIndex = Math.min(activeSnapshotIndex, Math.max(0, snapshots.length - 1));
-        return snapshots[safeIndex]?.nodes ?? fallbackNodes;
-    }, [snapshots, activeSnapshotIndex, fallbackNodes]);
+        return snapshots[effectiveSnapshotIndex]?.nodes ?? fallbackNodes;
+    }, [snapshots, effectiveSnapshotIndex, fallbackNodes]);
 
     const layoutNodes = useMemo(() => {
         if (!snapshots.length) return fallbackNodes;
@@ -146,37 +154,18 @@ export function KnowledgeMap({ spaceId, userId, className, onNodeClick }: Knowle
 
     const totalNodes = currentNodes.length;
     const visibleNodes = filteredNodes.length;
-        useEffect(() => {
-            if (!snapshots.length) {
-                setActiveSnapshotIndex(0);
-                setIsPlaying(false);
-                timelineInitializedRef.current = false;
-                return;
-            }
+    const isTimelinePlaying = isPlaying && snapshots.length > 1;
 
-            setActiveSnapshotIndex((prev) => {
-                const target = Math.min(prev, snapshots.length - 1);
-                if (!timelineInitializedRef.current) {
-                    timelineInitializedRef.current = true;
-                    return snapshots.length - 1;
-                }
-                return target;
-            });
-        }, [snapshots.length]);
-
-        useEffect(() => {
-            if (!isPlaying || snapshots.length <= 1) return undefined;
+    useEffect(() => {
+            if (!isTimelinePlaying) return undefined;
             const interval = window.setInterval(() => {
-                setActiveSnapshotIndex((prev) => (prev + 1) % snapshots.length);
+                setActiveSnapshotIndex((prev) => {
+                    const start = prev < 0 ? snapshots.length - 1 : prev;
+                    return (start + 1) % snapshots.length;
+                });
             }, 1800);
             return () => window.clearInterval(interval);
-        }, [isPlaying, snapshots.length]);
-
-        useEffect(() => {
-            if (snapshots.length <= 1 && isPlaying) {
-                setIsPlaying(false);
-            }
-        }, [snapshots.length, isPlaying]);
+        }, [isTimelinePlaying, snapshots.length]);
 
     const filtersActive =
         filters.activity !== MAP_FILTER_DEFAULTS.activity ||
@@ -189,7 +178,9 @@ export function KnowledgeMap({ spaceId, userId, className, onNodeClick }: Knowle
     if (!containerRef.current) return;
     if (appRef.current) return;
 
-    let app: Application;
+    let app: Application | null = null;
+    let isDisposed = false;
+    const cleanupListeners: Array<() => void> = [];
 
     const initPixi = async () => {
         app = new Application();
@@ -207,9 +198,10 @@ export function KnowledgeMap({ spaceId, userId, className, onNodeClick }: Knowle
             }
         });
 
-        if (!containerRef.current) { 
+        if (!containerRef.current || isDisposed) {
             // Component unmounted during init
             app.destroy(true);
+            app = null;
             return; 
         }
 
@@ -231,54 +223,76 @@ export function KnowledgeMap({ spaceId, userId, className, onNodeClick }: Knowle
         let isDragging = false;
         let lastPos = { x: 0, y: 0 };
 
-        app.canvas.addEventListener('mousedown', (e) => {
+        const onMouseDown = (e: MouseEvent) => {
              // Only pan if background clicked (not a node)
              // But simpler to just allow pan everywhere for now
              if(e.button === 0) {
                  isDragging = true;
                  lastPos = { x: e.clientX, y: e.clientY };
-                 app.canvas.style.cursor = 'grabbing';
+                 const canvas = appRef.current?.canvas;
+                 if (canvas?.style) {
+                    canvas.style.cursor = 'grabbing';
+                 }
              }
-        });
-
-        const stopDrag = () => {
-            isDragging = false;
-            app.canvas.style.cursor = 'default';
         };
 
-        window.addEventListener('mouseup', stopDrag);
-        
-        // Use window for mousemove to handle dragging outside canvas
-        window.addEventListener('mousemove', (e) => {
-            if (isDragging && world) {
-                const dx = e.clientX - lastPos.x;
-                const dy = e.clientY - lastPos.y;
-                world.x += dx;
-                world.y += dy;
-                lastPos = { x: e.clientX, y: e.clientY };
+        const onMouseUp = () => {
+            isDragging = false;
+            const canvas = appRef.current?.canvas;
+            if (canvas?.style) {
+                canvas.style.cursor = 'default';
             }
-        });
+        };
+
+        const onMouseMove = (e: MouseEvent) => {
+            if (!isDragging) return;
+            const currentWorld = worldRef.current;
+            if (!currentWorld) return;
+            const dx = e.clientX - lastPos.x;
+            const dy = e.clientY - lastPos.y;
+            currentWorld.x += dx;
+            currentWorld.y += dy;
+            lastPos = { x: e.clientX, y: e.clientY };
+        };
+
+        const onWheel = (e: WheelEvent) => {
+            e.preventDefault();
+            const currentWorld = worldRef.current;
+            if (!currentWorld) return;
+            const scaleFactor = e.deltaY > 0 ? 0.9 : 1.1;
+            const newScale = Math.max(0.1, Math.min(5, currentWorld.scale.x * scaleFactor));
+            currentWorld.scale.set(newScale);
+            setZoom(newScale);
+        };
+        
+        app.canvas.addEventListener('mousedown', onMouseDown);
+        cleanupListeners.push(() => app?.canvas?.removeEventListener('mousedown', onMouseDown));
+
+        window.addEventListener('mouseup', onMouseUp);
+        cleanupListeners.push(() => window.removeEventListener('mouseup', onMouseUp));
+
+        // Use window for mousemove to handle dragging outside canvas
+        window.addEventListener('mousemove', onMouseMove);
+        cleanupListeners.push(() => window.removeEventListener('mousemove', onMouseMove));
         
         // Zoom logic
-        app.canvas.addEventListener('wheel', (e) => {
-            e.preventDefault();
-            const scaleFactor = e.deltaY > 0 ? 0.9 : 1.1;
-            if (world) {
-                const newScale = Math.max(0.1, Math.min(5, world.scale.x * scaleFactor));
-                world.scale.set(newScale);
-                setZoom(newScale);
-            }
-        }, { passive: false });
+        app.canvas.addEventListener('wheel', onWheel, { passive: false });
+        cleanupListeners.push(() => app?.canvas?.removeEventListener('wheel', onWheel));
 
     };
 
     initPixi();
 
     return () => {
+        isDisposed = true;
+        cleanupListeners.forEach((fn) => fn());
+        cleanupListeners.length = 0;
+        worldRef.current = null;
         if (appRef.current) {
             appRef.current.destroy(true);
             appRef.current = null;
         }
+        app = null;
     };
   }, []);
 
@@ -343,11 +357,11 @@ export function KnowledgeMap({ spaceId, userId, className, onNodeClick }: Knowle
         // Size = items (min 10, max 60)
         const radius = Math.max(10, Math.min(60, Math.sqrt(node.artifact_count) * 6));
         
-        // Color = confidence (Low <0.4, Med 0.4-0.7, High >0.7)
+        // Color = confidence (Low/Med/High via shared focus thresholds)
         // Using heatmap colors: low=grey/blue, med=purple, high=orange/gold
         let color = 0x5e6ad2; // Default blue
-        if (node.confidence > 0.7) color = 0xf59e0b; // Amber
-        else if (node.confidence > 0.4) color = 0x8b5cf6; // Violet
+        if (node.confidence > FOCUS_CONFIDENCE_HIGH_THRESHOLD) color = 0xf59e0b; // Amber
+        else if (node.confidence > FOCUS_CONFIDENCE_MEDIUM_THRESHOLD) color = 0x8b5cf6; // Violet
         else color = 0x64748b; // Slate
 
         const g = new Graphics();
@@ -441,7 +455,7 @@ export function KnowledgeMap({ spaceId, userId, className, onNodeClick }: Knowle
     const timelineHasHistory = snapshots.length > 1;
     const firstSnapshot = snapshots[0];
     const latestSnapshot = snapshots[snapshots.length - 1];
-    const activeSnapshot = snapshots[activeSnapshotIndex];
+    const activeSnapshot = snapshots[effectiveSnapshotIndex];
 
     const handleTimelineScrub = (value: number) => {
         setActiveSnapshotIndex(value);
@@ -617,7 +631,14 @@ export function KnowledgeMap({ spaceId, userId, className, onNodeClick }: Knowle
                 </div>
                 <div className="flex justify-between text-gray-400">
                     <span>Focus:</span>
-                    <span style={{ color: hoveredNode.confidence > 0.7 ? '#f59e0b' : '#8b5cf6' }}>
+                    <span
+                        style={{
+                            color:
+                                hoveredNode.confidence > FOCUS_CONFIDENCE_HIGH_THRESHOLD
+                                    ? '#f59e0b'
+                                    : '#8b5cf6',
+                        }}
+                    >
                         {Math.round(hoveredNode.confidence * 100)}%
                     </span>
                 </div>
@@ -634,9 +655,9 @@ export function KnowledgeMap({ spaceId, userId, className, onNodeClick }: Knowle
                                 size="icon"
                                 onClick={handlePlaybackToggle}
                                 disabled={!timelineHasHistory}
-                                title={timelineHasHistory ? (isPlaying ? 'Pause playback' : 'Play timeline') : 'More snapshots needed'}
+                                title={timelineHasHistory ? (isTimelinePlaying ? 'Pause playback' : 'Play timeline') : 'More snapshots needed'}
                             >
-                                {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                                {isTimelinePlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                             </Button>
                             <div>
                                 <p className="flex items-center gap-1 text-xs font-medium text-white">
@@ -644,7 +665,7 @@ export function KnowledgeMap({ spaceId, userId, className, onNodeClick }: Knowle
                                     {formatSnapshotTimestamp(activeSnapshot?.timestamp ?? topology?.metadata?.last_updated)}
                                 </p>
                                 <p className="text-[10px] uppercase tracking-wide text-white/50">
-                                    Snapshot {snapshots.length ? activeSnapshotIndex + 1 : 0}/{snapshots.length || 1}
+                                    Snapshot {snapshots.length ? effectiveSnapshotIndex + 1 : 0}/{snapshots.length || 1}
                                 </p>
                             </div>
                         </div>
@@ -653,7 +674,7 @@ export function KnowledgeMap({ spaceId, userId, className, onNodeClick }: Knowle
                                 type="range"
                                 min={0}
                                 max={Math.max(0, snapshots.length - 1)}
-                                value={snapshots.length ? activeSnapshotIndex : 0}
+                                value={snapshots.length ? effectiveSnapshotIndex : 0}
                                 onChange={(event) => handleTimelineScrub(Number(event.target.value))}
                                 disabled={snapshots.length <= 1}
                                 className="w-full accent-[#5E6AD2]"

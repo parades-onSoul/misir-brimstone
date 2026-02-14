@@ -85,9 +85,10 @@ export function classifyEngagement(
   wordCount: number
 ): EngagementLevel {
   const seconds = dwellMs / 1000;
-  if (seconds >= 60 && scrollDepth >= 0.5 && wordCount >= 300) return 'committed';
+  if (seconds >= 60 && scrollDepth >= 0.5 && wordCount >= 300) return 'saturated';
   if (seconds >= 15 && (scrollDepth >= 0.2 || wordCount >= 100)) return 'engaged';
-  return 'ambient';
+  if (seconds >= 8 && (scrollDepth >= 0.1 || wordCount >= 40)) return 'discovered';
+  return 'latent';
 }
 
 // ── Cleanup ──────────────────────────────────────────

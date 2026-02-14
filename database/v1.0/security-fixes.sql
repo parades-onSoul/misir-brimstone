@@ -356,9 +356,9 @@ BEGIN
     END;
     
     -- Validate dimension matches config
-    IF array_length(p_embedding, 1) != v_embedding_dimension THEN
+    IF vector_dims(p_embedding) != v_embedding_dimension THEN
         RAISE EXCEPTION 'embedding dimension mismatch: expected % (from system_config), got %', 
-            v_embedding_dimension, array_length(p_embedding, 1);
+            v_embedding_dimension, vector_dims(p_embedding);
     END IF;
     
     -- Normalize URL & domain

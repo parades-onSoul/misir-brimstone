@@ -90,7 +90,7 @@ async def search(
     space_id: Optional[int] = Query(None, description="Filter by space"),
     subspace_id: Optional[int] = Query(None, description="Filter by subspace"),
     limit: int = Query(20, ge=1, le=100, description="Max results"),
-    threshold: float = Query(0.7, ge=0.0, le=1.0, description="Min similarity"),
+    threshold: float = Query(0.55, ge=0.0, le=1.0, description="Min similarity"),
     client: Client = Depends(get_supabase_client)
 ):
     """
@@ -103,7 +103,7 @@ async def search(
         space_id: Optional space filter
         subspace_id: Optional subspace filter
         limit: Maximum results (default 20)
-        threshold: Minimum similarity (default 0.7)
+        threshold: Minimum similarity (default 0.55)
     
     Returns:
         SearchResponseModel with ranked results
@@ -127,7 +127,7 @@ async def search(
     # Convert Result to HTTP response
     if result.is_err():
         error = result.unwrap_err()
-        raise create_problem_response(error, str(request.url.path))
+        return create_problem_response(error, str(request.url.path))
     
     response = result.unwrap()
     

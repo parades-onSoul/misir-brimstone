@@ -54,6 +54,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         
         # Measure latency
         start_time = time.time()
+        status = 500  # default for error paths where call_next fails before setting response
         try:
             response = await call_next(request)
             status = response.status_code

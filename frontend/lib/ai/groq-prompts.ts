@@ -1,5 +1,5 @@
 /**
- * Gemini AI Prompts v2.1 - Multi-Factor Adaptive
+ * Groq AI Prompts v2.1 - Multi-Factor Adaptive
  * 
  * Architecture:
  * - Prompts analyze input signals (domain complexity, expertise, intent)
@@ -18,7 +18,7 @@ export interface SubspaceWithMarkers {
   suggested_study_order?: number;
 }
 
-export const GEMINI_PROMPTS = {
+export const GROQ_PROMPTS = {
   standard: `You are an expert semantic knowledge architect designing personalized learning systems.
 
 TASK: Break down a knowledge domain into coherent semantic subspaces.
@@ -225,21 +225,321 @@ CRITICAL RULES:
 - ❌ Do NOT include advanced concepts`
 };
 
+export type PromptModeClassifierSource = 'semantic' | 'llm' | 'fallback';
+
+export interface PromptModeClassification {
+  mode: PromptMode;
+  confidence: number;
+  margin: number;
+  source: PromptModeClassifierSource;
+  scores: Record<PromptMode, number>;
+}
+
+export interface PromptModeClassifierOptions {
+  lowConfidenceThreshold?: number;
+  minMargin?: number;
+  llmFallback?: (intention: string) => Promise<PromptMode | null>;
+}
+
+interface SemanticModel {
+  idf: Map<string, number>;
+  centroids: Record<PromptMode, Map<string, number>>;
+}
+
+const MODE_EXAMPLES: Record<PromptMode, string[]> = {
+  advanced: [
+    'I need deep research coverage for this topic and rigorous analysis.',
+    'Help me learn the theoretical foundations and advanced concepts.',
+    'I want academic depth with formal methods and detailed reasoning.',
+    'Design an expert-level learning path for production architecture.',
+    'I am preparing a paper and need comprehensive technical scope.',
+  ],
+  fast: [
+    'Give me a quick overview and a beginner-friendly starting point.',
+    'I only need the basics to get started quickly.',
+    'Create a fast onboarding plan with essential concepts only.',
+    'I want an intro-level breakdown in simple language.',
+    'Help me learn this rapidly with a short practical roadmap.',
+  ],
+  standard: [
+    'I want to learn this topic properly from start to finish.',
+    'Build a balanced plan covering core concepts and applications.',
+    'Help me understand this domain with moderate depth.',
+    'I need structured learning with clear categories and useful markers.',
+    'Create a complete but practical overview of this knowledge space.',
+  ],
+};
+
+const STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'how', 'i', 'in',
+  'is', 'it', 'me', 'my', 'of', 'on', 'or', 'so', 'that', 'the', 'this', 'to', 'we',
+  'with', 'want', 'need', 'help', 'learn', 'about', 'topic', 'please',
+]);
+
+const ADVANCED_KEYWORD_REGEX = /research|academic|paper|publish|rigorous|theoretical|deep|expert|architecture|formal|production/i;
+const FAST_KEYWORD_REGEX = /quick|fast|intro|overview|basics|getting started|beginner|rapid|brief/i;
+
+let semanticModelCache: SemanticModel | null = null;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function normalizeToken(token: string): string {
+  const cleaned = token.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!cleaned) {
+    return '';
+  }
+  if (cleaned.length > 4 && cleaned.endsWith('ing')) {
+    return cleaned.slice(0, -3);
+  }
+  if (cleaned.length > 3 && cleaned.endsWith('ed')) {
+    return cleaned.slice(0, -2);
+  }
+  if (cleaned.length > 3 && cleaned.endsWith('s')) {
+    return cleaned.slice(0, -1);
+  }
+  return cleaned;
+}
+
+function tokenize(text: string): string[] {
+  const baseTokens = text
+    .split(/\s+/)
+    .map(normalizeToken)
+    .filter(token => token && !STOP_WORDS.has(token));
+
+  const bigrams: string[] = [];
+  for (let i = 0; i < baseTokens.length - 1; i++) {
+    bigrams.push(`${baseTokens[i]}_${baseTokens[i + 1]}`);
+  }
+
+  return [...baseTokens, ...bigrams];
+}
+
+function computeTf(tokens: string[]): Map<string, number> {
+  const tf = new Map<string, number>();
+  if (!tokens.length) {
+    return tf;
+  }
+  for (const token of tokens) {
+    tf.set(token, (tf.get(token) || 0) + 1);
+  }
+  for (const [token, count] of tf.entries()) {
+    tf.set(token, count / tokens.length);
+  }
+  return tf;
+}
+
+function normalizeVector(vector: Map<string, number>): Map<string, number> {
+  let normSquared = 0;
+  for (const value of vector.values()) {
+    normSquared += value * value;
+  }
+  const norm = Math.sqrt(normSquared);
+  if (!norm) {
+    return vector;
+  }
+  const normalized = new Map<string, number>();
+  for (const [token, value] of vector.entries()) {
+    normalized.set(token, value / norm);
+  }
+  return normalized;
+}
+
+function toTfidfVector(tokens: string[], idf: Map<string, number>): Map<string, number> {
+  const tf = computeTf(tokens);
+  const vector = new Map<string, number>();
+  for (const [token, tfValue] of tf.entries()) {
+    const idfValue = idf.get(token) || 0;
+    if (!idfValue) {
+      continue;
+    }
+    vector.set(token, tfValue * idfValue);
+  }
+  return normalizeVector(vector);
+}
+
+function cosineSimilarity(left: Map<string, number>, right: Map<string, number>): number {
+  if (!left.size || !right.size) {
+    return 0;
+  }
+  let dot = 0;
+  for (const [token, leftValue] of left.entries()) {
+    const rightValue = right.get(token);
+    if (rightValue !== undefined) {
+      dot += leftValue * rightValue;
+    }
+  }
+  return clamp(dot, 0, 1);
+}
+
+function buildSemanticModel(): SemanticModel {
+  const documents: Array<{ mode: PromptMode; tokens: string[] }> = [];
+  const documentFrequency = new Map<string, number>();
+
+  for (const mode of Object.keys(MODE_EXAMPLES) as PromptMode[]) {
+    for (const example of MODE_EXAMPLES[mode]) {
+      const tokens = tokenize(example);
+      documents.push({ mode, tokens });
+      const seen = new Set(tokens);
+      for (const token of seen) {
+        documentFrequency.set(token, (documentFrequency.get(token) || 0) + 1);
+      }
+    }
+  }
+
+  const totalDocs = documents.length;
+  const idf = new Map<string, number>();
+  for (const [token, freq] of documentFrequency.entries()) {
+    const score = Math.log((1 + totalDocs) / (1 + freq)) + 1;
+    idf.set(token, score);
+  }
+
+  const sums: Record<PromptMode, Map<string, number>> = {
+    advanced: new Map<string, number>(),
+    fast: new Map<string, number>(),
+    standard: new Map<string, number>(),
+  };
+  const counts: Record<PromptMode, number> = { advanced: 0, fast: 0, standard: 0 };
+
+  for (const doc of documents) {
+    const vector = toTfidfVector(doc.tokens, idf);
+    counts[doc.mode] += 1;
+    const bucket = sums[doc.mode];
+    for (const [token, value] of vector.entries()) {
+      bucket.set(token, (bucket.get(token) || 0) + value);
+    }
+  }
+
+  const centroids: Record<PromptMode, Map<string, number>> = {
+    advanced: new Map<string, number>(),
+    fast: new Map<string, number>(),
+    standard: new Map<string, number>(),
+  };
+
+  for (const mode of Object.keys(sums) as PromptMode[]) {
+    const averaged = new Map<string, number>();
+    const denominator = Math.max(counts[mode], 1);
+    for (const [token, value] of sums[mode].entries()) {
+      averaged.set(token, value / denominator);
+    }
+    centroids[mode] = normalizeVector(averaged);
+  }
+
+  return { idf, centroids };
+}
+
+function getSemanticModel(): SemanticModel {
+  if (!semanticModelCache) {
+    semanticModelCache = buildSemanticModel();
+  }
+  return semanticModelCache;
+}
+
+function getKeywordBoost(mode: PromptMode, text: string): number {
+  if (!text) {
+    return 0;
+  }
+  if (mode === 'advanced' && ADVANCED_KEYWORD_REGEX.test(text)) {
+    return 0.08;
+  }
+  if (mode === 'fast' && FAST_KEYWORD_REGEX.test(text)) {
+    return 0.08;
+  }
+  return 0;
+}
+
+function getTopTwoModes(scores: Record<PromptMode, number>): [PromptMode, PromptMode] {
+  const sorted = (Object.entries(scores) as Array<[PromptMode, number]>)
+    .sort((left, right) => right[1] - left[1]);
+  return [sorted[0][0], sorted[1][0]];
+}
+
+function classifyPromptModeSemantic(intention?: string): PromptModeClassification {
+  const text = (intention || '').trim();
+  if (!text) {
+    return {
+      mode: 'standard',
+      confidence: 0,
+      margin: 0,
+      source: 'fallback',
+      scores: { advanced: 0, fast: 0, standard: 0 },
+    };
+  }
+
+  const model = getSemanticModel();
+  const intentVector = toTfidfVector(tokenize(text), model.idf);
+  const rawScores: Record<PromptMode, number> = {
+    advanced: cosineSimilarity(intentVector, model.centroids.advanced),
+    fast: cosineSimilarity(intentVector, model.centroids.fast),
+    standard: cosineSimilarity(intentVector, model.centroids.standard),
+  };
+
+  const boostedScores: Record<PromptMode, number> = {
+    advanced: clamp(rawScores.advanced + getKeywordBoost('advanced', text), 0, 1),
+    fast: clamp(rawScores.fast + getKeywordBoost('fast', text), 0, 1),
+    standard: clamp(rawScores.standard, 0, 1),
+  };
+
+  const [bestMode, secondMode] = getTopTwoModes(boostedScores);
+  const margin = clamp(boostedScores[bestMode] - boostedScores[secondMode], 0, 1);
+  const confidence = clamp((boostedScores[bestMode] * 0.65) + (margin * 0.35), 0, 1);
+
+  return {
+    mode: bestMode,
+    confidence,
+    margin,
+    source: 'semantic',
+    scores: boostedScores,
+  };
+}
+
+function isPromptMode(value: unknown): value is PromptMode {
+  return value === 'standard' || value === 'advanced' || value === 'fast';
+}
+
+export async function classifyPromptMode(
+  intention?: string,
+  options: PromptModeClassifierOptions = {}
+): Promise<PromptModeClassification> {
+  const local = classifyPromptModeSemantic(intention);
+  const text = (intention || '').trim();
+  if (!text) {
+    return local;
+  }
+
+  const threshold = options.lowConfidenceThreshold ?? 0.33;
+  const minMargin = options.minMargin ?? 0.06;
+  const isConfident = local.confidence >= threshold && local.margin >= minMargin;
+  if (isConfident) {
+    return local;
+  }
+
+  if (options.llmFallback) {
+    try {
+      const llmMode = await options.llmFallback(text);
+      if (isPromptMode(llmMode)) {
+        return {
+          ...local,
+          mode: llmMode,
+          source: 'llm',
+          confidence: clamp(Math.max(local.confidence, 0.51), 0, 1),
+        };
+      }
+    } catch {
+      // Ignore fallback errors and use deterministic local fallback.
+    }
+  }
+
+  return {
+    ...local,
+    mode: 'standard',
+    source: 'fallback',
+  };
+}
+
 export function selectPromptMode(intention?: string): PromptMode {
-  const lowerIntent = intention?.toLowerCase() || '';
-  
-  // Research/academic users
-  if (/research|academic|paper|publish|rigorous|theoretical|deep understanding/i.test(lowerIntent)) {
-    return 'advanced';
-  }
-  
-  // Speed/quick learners
-  if (/quick|fast|intro|overview|basics|getting started|beginner/i.test(lowerIntent)) {
-    return 'fast';
-  }
-  
-  // Default: Standard (handles most cases)
-  return 'standard';
+  return classifyPromptModeSemantic(intention).mode;
 }
 
 export function formatPrompt(
@@ -248,7 +548,7 @@ export function formatPrompt(
   description?: string,
   intention?: string
 ): string {
-  return GEMINI_PROMPTS[mode]
+  return GROQ_PROMPTS[mode]
     .replace('{space_name}', spaceName)
     .replace('{description}', description || '')
     .replace('{intention}', intention || `Learn comprehensive knowledge of ${spaceName}`);

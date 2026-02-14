@@ -8,7 +8,7 @@ Endpoints:
 
 Uses RFC 9457 Problem Details for standardized error responses.
 """
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi_problem.error import Problem
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
@@ -62,9 +62,33 @@ def get_supabase() -> Client:
     return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
 
 
+def get_current_user(
+    authorization: str = Header(None),
+    client: Client = Depends(get_supabase)
+) -> str:
+    """Extract user_id from Bearer JWT token."""
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="Authorization header required")
+
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Invalid authorization format")
+
+        token = authorization.split(" ")[1]
+        user = client.auth.get_user(token)
+        if not user or not user.user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        return user.user.id
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {e}")
+
+
 @router.get("", response_model=ProfileResponse)
 async def get_profile(
-    user_id: str = Query(..., description="User UUID"),
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase)
 ):
     """
@@ -74,7 +98,7 @@ async def get_profile(
     """
     try:
         handler = ProfileHandler(client)
-        cmd = GetProfileCommand(user_id=user_id)
+        cmd = GetProfileCommand(user_id=current_user_id)
         result = await handler.get_profile(cmd)
         
         return ProfileResponse(
@@ -98,7 +122,7 @@ async def get_profile(
 @router.patch("", response_model=ProfileResponse)
 async def update_settings(
     request: UpdateSettingsRequest,
-    user_id: str = Query(..., description="User UUID"),
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase)
 ):
     """
@@ -113,7 +137,7 @@ async def update_settings(
     """
     try:
         handler = ProfileHandler(client)
-        cmd = UpdateSettingsCommand(user_id=user_id, settings=request.settings)
+        cmd = UpdateSettingsCommand(user_id=current_user_id, settings=request.settings)
         result = await handler.update_settings(cmd)
         
         return ProfileResponse(
@@ -136,7 +160,7 @@ async def update_settings(
 
 @router.post("/onboard", response_model=ProfileResponse)
 async def mark_onboarded(
-    user_id: str = Query(..., description="User UUID"),
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase)
 ):
     """
@@ -147,7 +171,7 @@ async def mark_onboarded(
     """
     try:
         handler = ProfileHandler(client)
-        cmd = MarkOnboardedCommand(user_id=user_id)
+        cmd = MarkOnboardedCommand(user_id=current_user_id)
         result = await handler.mark_onboarded(cmd)
         
         return ProfileResponse(
@@ -171,7 +195,7 @@ async def mark_onboarded(
 @router.patch("/metadata", response_model=ProfileResponse)
 async def update_profile_metadata(
     request: UpdateProfileRequest,
-    user_id: str = Query(..., description="User UUID"),
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase)
 ):
     """
@@ -182,7 +206,7 @@ async def update_profile_metadata(
     try:
         handler = ProfileHandler(client)
         cmd = UpdateProfileCommand(
-            user_id=user_id,
+            user_id=current_user_id,
             display_name=request.display_name,
             avatar_url=request.avatar_url,
             timezone=request.timezone

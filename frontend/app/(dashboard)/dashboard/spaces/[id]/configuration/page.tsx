@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import {
@@ -9,12 +9,11 @@ import {
     Tag,
     Layers,
     Trash2,
-    Plus,
     ChevronRight,
     AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
-import { useSpace, useDeleteSpace } from '@/lib/api/spaces';
+import { useSpace, useDeleteSpace, useSubspaces, useUpdateSpace } from '@/lib/api/spaces';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -38,22 +37,39 @@ export default function SpaceConfigurationPage() {
     const spaceId = Number.isFinite(Number(rawId)) ? Number(rawId) : undefined;
 
     const { data: space, isLoading } = useSpace(spaceId as number, user?.id);
+    const { data: subspaces, isLoading: subspacesLoading } = useSubspaces(spaceId, user?.id);
     const { mutate: deleteSpace, isPending: isDeleting } = useDeleteSpace();
+    const { mutate: updateSpace, isPending: isUpdating } = useUpdateSpace();
+
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+    const [draft, setDraft] = useState<{ spaceId: number | null; name: string; description: string }>({
+        spaceId: null,
+        name: '',
+        description: '',
+    });
+    const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
-    // Mock subspaces and markers for display
-    const mockSubspaces = [
-        { id: 1, name: 'Core Concepts', artifact_count: 12, confidence: 0.85 },
-        { id: 2, name: 'Practical Applications', artifact_count: 8, confidence: 0.62 },
-        { id: 3, name: 'Research Papers', artifact_count: 5, confidence: 0.45 },
-    ];
+    const markers = useMemo(() => {
+        if (!subspaces?.length) return [];
+        const counts = new Map<string, number>();
+        for (const subspace of subspaces) {
+            for (const marker of subspace.markers || []) {
+                const normalized = marker.trim();
+                if (!normalized) continue;
+                counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+            }
+        }
+        return [...counts.entries()]
+            .map(([label, count]) => ({ label, count }))
+            .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    }, [subspaces]);
 
-    const mockMarkers = [
-        { id: 1, label: 'neural-networks', weight: 1.0 },
-        { id: 2, label: 'transformer-architecture', weight: 0.8 },
-        { id: 3, label: 'optimization', weight: 0.6 },
-        { id: 4, label: 'gradient-descent', weight: 0.5 },
-    ];
+    const activeName = space && draft.spaceId === space.id ? draft.name : (space?.name ?? '');
+    const activeDescription =
+        space && draft.spaceId === space.id ? draft.description : (space?.description ?? '');
+    const hasChanges =
+        !!space &&
+        (activeName.trim() !== space.name || activeDescription.trim() !== (space.description ?? ''));
 
     const handleDelete = () => {
         if (!user || !spaceId) return;
@@ -62,6 +78,28 @@ export default function SpaceConfigurationPage() {
             {
                 onSuccess: () => router.push('/dashboard'),
                 onError: () => setShowDeleteDialog(false),
+            }
+        );
+    };
+
+    const handleSave = () => {
+        if (!user || !spaceId || !space || !hasChanges) return;
+        setSaveMessage(null);
+        updateSpace(
+            {
+                spaceId,
+                userId: user.id,
+                data: {
+                    name: activeName.trim(),
+                    description: activeDescription.trim() || null,
+                },
+            },
+            {
+                onSuccess: () => setSaveMessage('Saved.'),
+                onError: (error) => {
+                    const message = error instanceof Error ? error.message : 'Failed to save changes';
+                    setSaveMessage(message);
+                },
             }
         );
     };
@@ -99,7 +137,6 @@ export default function SpaceConfigurationPage() {
 
     return (
         <div className="space-y-6 max-w-4xl">
-            {/* Header */}
             <div className="flex items-center gap-2">
                 <Button
                     variant="ghost"
@@ -112,43 +149,41 @@ export default function SpaceConfigurationPage() {
                 <div>
                     <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
                         <Settings className="h-5 w-5 text-primary" />
-                        {space.name} — Configuration
+                        {space.name} - Configuration
                     </h1>
                     <p className="text-muted-foreground text-sm">
-                        Manage subspaces, markers, and space settings
+                        Manage topics, markers, and space settings
                     </p>
                 </div>
             </div>
 
-            {/* Subspaces */}
-            <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-            >
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
                 <Card>
                     <CardHeader>
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <CardTitle className="text-base flex items-center gap-2">
-                                    <Layers className="h-4 w-4 text-primary" />
-                                    Subspaces
-                                </CardTitle>
-                                <CardDescription>
-                                    Semantic clusters auto-generated from your artifacts
-                                </CardDescription>
-                            </div>
-                        </div>
+                        <CardTitle className="text-base flex items-center gap-2">
+                            <Layers className="h-4 w-4 text-primary" />
+                            Topics
+                        </CardTitle>
+                        <CardDescription>
+                            Semantic clusters auto-generated from your captured artifacts
+                        </CardDescription>
                     </CardHeader>
                     <CardContent>
-                        {mockSubspaces.length > 0 ? (
+                        {subspacesLoading ? (
                             <div className="space-y-2">
-                                {mockSubspaces.map((sub, i) => (
+                                {[...Array(3)].map((_, idx) => (
+                                    <Skeleton key={idx} className="h-14 w-full" />
+                                ))}
+                            </div>
+                        ) : subspaces && subspaces.length > 0 ? (
+                            <div className="space-y-2">
+                                {subspaces.map((sub, i) => (
                                     <motion.div
                                         key={sub.id}
                                         initial={{ opacity: 0, x: -10 }}
                                         animate={{ opacity: 1, x: 0 }}
                                         transition={{ delay: i * 0.05 }}
-                                        className="flex items-center justify-between rounded-lg border border-border/50 bg-muted/10 p-3 hover:bg-muted/20 transition-colors cursor-pointer group"
+                                        className="flex items-center justify-between rounded-lg border border-border/50 bg-muted/10 p-3 hover:bg-muted/20 transition-colors"
                                     >
                                         <div className="flex items-center gap-3">
                                             <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-xs font-medium text-primary">
@@ -157,24 +192,23 @@ export default function SpaceConfigurationPage() {
                                             <div>
                                                 <div className="text-sm font-medium">{sub.name}</div>
                                                 <div className="text-xs text-muted-foreground">
-                                                    {sub.artifact_count} artifacts · {Math.round(sub.confidence * 100)}% confidence
+                                                    {sub.artifact_count} artifacts · {Math.round((sub.confidence ?? 0) * 100)}% confidence
                                                 </div>
                                             </div>
                                         </div>
-                                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-70" />
                                     </motion.div>
                                 ))}
                             </div>
                         ) : (
                             <div className="text-center py-8 text-sm text-muted-foreground">
-                                No subspaces yet. They&apos;ll be auto-created as you capture more content.
+                                No topics yet. They will be auto-created as you capture more content.
                             </div>
                         )}
                     </CardContent>
                 </Card>
             </motion.div>
 
-            {/* Markers */}
             <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -182,48 +216,42 @@ export default function SpaceConfigurationPage() {
             >
                 <Card>
                     <CardHeader>
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <CardTitle className="text-base flex items-center gap-2">
-                                    <Tag className="h-4 w-4 text-primary" />
-                                    Markers
-                                </CardTitle>
-                                <CardDescription>
-                                    Semantic tags for artifact classification
-                                </CardDescription>
-                            </div>
-                            <Button variant="outline" size="sm">
-                                <Plus className="mr-1 h-3 w-3" />
-                                Add marker
-                            </Button>
-                        </div>
+                        <CardTitle className="text-base flex items-center gap-2">
+                            <Tag className="h-4 w-4 text-primary" />
+                            Markers
+                        </CardTitle>
+                        <CardDescription>
+                            Marker labels currently associated with this space
+                        </CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <div className="flex flex-wrap gap-2">
-                            {mockMarkers.map((marker, i) => (
-                                <motion.div
-                                    key={marker.id}
-                                    initial={{ opacity: 0, scale: 0.8 }}
-                                    animate={{ opacity: 1, scale: 1 }}
-                                    transition={{ delay: i * 0.05 }}
-                                >
-                                    <Badge
-                                        variant="outline"
-                                        className="px-3 py-1.5 text-xs cursor-pointer hover:bg-primary/10 transition-colors"
+                        {markers.length > 0 ? (
+                            <div className="flex flex-wrap gap-2">
+                                {markers.map((marker, i) => (
+                                    <motion.div
+                                        key={marker.label}
+                                        initial={{ opacity: 0, scale: 0.8 }}
+                                        animate={{ opacity: 1, scale: 1 }}
+                                        transition={{ delay: i * 0.04 }}
                                     >
-                                        {marker.label}
-                                        <span className="ml-1.5 text-muted-foreground/60">
-                                            {marker.weight.toFixed(1)}
-                                        </span>
-                                    </Badge>
-                                </motion.div>
-                            ))}
-                        </div>
+                                        <Badge variant="outline" className="px-3 py-1.5 text-xs">
+                                            {marker.label}
+                                            <span className="ml-1.5 text-muted-foreground/70">
+                                                {marker.count} topic{marker.count > 1 ? 's' : ''}
+                                            </span>
+                                        </Badge>
+                                    </motion.div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-sm text-muted-foreground">
+                                No markers yet for this space.
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
             </motion.div>
 
-            {/* Space Settings */}
             <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -241,7 +269,15 @@ export default function SpaceConfigurationPage() {
                             <Label htmlFor="space-name">Space name</Label>
                             <Input
                                 id="space-name"
-                                defaultValue={space.name}
+                                value={activeName}
+                                onChange={(event) => {
+                                    setSaveMessage(null);
+                                    setDraft({
+                                        spaceId: space.id,
+                                        name: event.target.value,
+                                        description: activeDescription,
+                                    });
+                                }}
                                 className="max-w-sm"
                             />
                         </div>
@@ -249,21 +285,33 @@ export default function SpaceConfigurationPage() {
                             <Label htmlFor="space-desc">Description</Label>
                             <Input
                                 id="space-desc"
-                                defaultValue={space.description || ''}
-                                placeholder="What's this space about?"
+                                value={activeDescription}
+                                onChange={(event) => {
+                                    setSaveMessage(null);
+                                    setDraft({
+                                        spaceId: space.id,
+                                        name: activeName,
+                                        description: event.target.value,
+                                    });
+                                }}
+                                placeholder="What is this space about?"
                                 className="max-w-sm"
                             />
                         </div>
-                        <Button size="sm" disabled>
-                            Save changes
-                        </Button>
+                        <div className="flex items-center gap-3">
+                            <Button size="sm" onClick={handleSave} disabled={!hasChanges || isUpdating}>
+                                {isUpdating ? 'Saving...' : 'Save changes'}
+                            </Button>
+                            {saveMessage && (
+                                <p className="text-xs text-muted-foreground">{saveMessage}</p>
+                            )}
+                        </div>
                     </CardContent>
                 </Card>
             </motion.div>
 
             <Separator />
 
-            {/* Danger Zone */}
             <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -275,9 +323,7 @@ export default function SpaceConfigurationPage() {
                             <AlertTriangle className="h-4 w-4" />
                             Danger Zone
                         </CardTitle>
-                        <CardDescription>
-                            Irreversible actions
-                        </CardDescription>
+                        <CardDescription>Irreversible actions</CardDescription>
                     </CardHeader>
                     <CardContent>
                         <Button
@@ -292,7 +338,6 @@ export default function SpaceConfigurationPage() {
                 </Card>
             </motion.div>
 
-            {/* Delete Confirmation Dialog */}
             <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
                 <DialogContent className="sm:max-w-[400px]">
                     <DialogHeader>
@@ -301,7 +346,7 @@ export default function SpaceConfigurationPage() {
                             Delete &quot;{space.name}&quot;?
                         </DialogTitle>
                         <DialogDescription>
-                            This will permanently delete this space and all its artifacts, subspaces, and signals.
+                            This will permanently delete this space and all its artifacts, topics, and signals.
                             This action cannot be undone.
                         </DialogDescription>
                     </DialogHeader>

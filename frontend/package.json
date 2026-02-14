@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "verify:api-contract": "node ./scripts/verify-api-contract.mjs",
+    "test:intent-classifier": "node ./scripts/run-intent-tests.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -181,4 +181,4 @@ Signals are immutable logs of user engagement:
 
 - [Domain Model Details](domain-model.md)
 - [Algorithm Specification](algorithms.md)
-- [API Architecture](../api/README.md)
+- [Canonical API/Architecture Reference](../../Tomal Docs/Misir_Full_Project_Documentation_2026-02-14.md)

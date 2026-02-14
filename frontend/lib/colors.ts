@@ -1,3 +1,8 @@
+import {
+    FOCUS_CONFIDENCE_HIGH_THRESHOLD,
+    FOCUS_CONFIDENCE_MEDIUM_THRESHOLD,
+} from '@/lib/focus-thresholds';
+
 /**
  * Color Constants — Semantic color system for Misir Dashboard
  * Based on MISIR_DASHBOARD_SPECIFICATION.md v1.0 Appendix: Color Palette
@@ -177,8 +182,8 @@ export function getSpaceColor(index: number) {
  * @returns Color scheme object
  */
 export function getFocusColor(confidence: number) {
-    if (confidence >= 0.7) return FOCUS_COLORS.high;
-    if (confidence >= 0.4) return FOCUS_COLORS.medium;
+    if (confidence >= FOCUS_CONFIDENCE_HIGH_THRESHOLD) return FOCUS_COLORS.high;
+    if (confidence >= FOCUS_CONFIDENCE_MEDIUM_THRESHOLD) return FOCUS_COLORS.medium;
     return FOCUS_COLORS.low;
 }
 

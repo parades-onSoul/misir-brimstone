@@ -34,9 +34,16 @@ export interface QueuedCapture {
   error?: string; // Last error message
 }
 
+export interface QueueProcessResult {
+  processed: number;
+  succeeded: number;
+  failed: number;
+}
+
 // ── Database Initialization ──────────────────────────
 
 let db: IDBDatabase | null = null;
+let activeQueueProcess: Promise<QueueProcessResult> | null = null;
 
 async function getDB(): Promise<IDBDatabase> {
   if (db) return db;
@@ -176,11 +183,14 @@ export async function getQueueItem(id: string): Promise<QueuedCapture | null> {
 export async function updateQueueItem(
   id: string,
   updates: Partial<QueuedCapture>
-): Promise<void> {
+): Promise<boolean> {
   const database = await getDB();
   const current = await getQueueItem(id);
 
-  if (!current) throw new Error(`Queue item ${id} not found`);
+  if (!current) {
+    // Item may have been processed or cleared concurrently.
+    return false;
+  }
 
   const updated: QueuedCapture = {
     ...current,
@@ -193,7 +203,7 @@ export async function updateQueueItem(
     const request = store.put(updated);
 
     request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve();
+    request.onsuccess = () => resolve(true);
   });
 }
 
@@ -219,51 +229,66 @@ export async function removeFromQueue(id: string): Promise<void> {
  */
 export async function processQueue(
   captureFunction: (payload: CapturePayload) => Promise<any>
-): Promise<{
-  processed: number;
-  succeeded: number;
-  failed: number;
-}> {
-  const ready = await getReadyToRetry();
-  let succeeded = 0;
-  let failed = 0;
-
-  for (const item of ready) {
-    try {
-      console.log(`[Misir Queue] Retrying capture ${item.id} (retry #${item.retries})`);
-      
-      await captureFunction(item.payload);
-      
-      // Success — remove from queue
-      await removeFromQueue(item.id);
-      succeeded++;
-      
-      console.log(`[Misir Queue] Successfully sent queued capture ${item.id}`);
-    } catch (error) {
-      // Failed — update retry count and next retry time
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      
-      await updateQueueItem(item.id, {
-        retries: item.retries + 1,
-        lastRetryAt: Date.now(),
-        nextRetryAt: calculateNextRetry(item.retries + 1),
-        error: errorMsg,
-      });
-      
-      failed++;
-      
-      console.warn(
-        `[Misir Queue] Retry failed for ${item.id}: ${errorMsg}`,
-        `Will retry at ${new Date(calculateNextRetry(item.retries + 1)).toISOString()}`
-      );
-    }
+): Promise<QueueProcessResult> {
+  if (activeQueueProcess) {
+    return activeQueueProcess;
   }
 
-  return {
-    processed: ready.length,
-    succeeded,
-    failed,
-  };
+  activeQueueProcess = (async () => {
+    const ready = await getReadyToRetry();
+    let succeeded = 0;
+    let failed = 0;
+
+    for (const item of ready) {
+      try {
+        console.log(`[Misir Queue] Retrying capture ${item.id} (retry #${item.retries})`);
+
+        await captureFunction(item.payload);
+
+        // Success - remove from queue
+        await removeFromQueue(item.id);
+        succeeded++;
+
+        console.log(`[Misir Queue] Successfully sent queued capture ${item.id}`);
+      } catch (error) {
+        // Failed - update retry count and next retry time
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+
+        const updated = await updateQueueItem(item.id, {
+          retries: item.retries + 1,
+          lastRetryAt: Date.now(),
+          nextRetryAt: calculateNextRetry(item.retries + 1),
+          error: errorMsg,
+        });
+
+        if (!updated) {
+          console.warn(
+            `[Misir Queue] Skipping retry update for missing item ${item.id} (likely cleared or already processed)`
+          );
+          continue;
+        }
+
+        failed++;
+
+        console.warn(
+          `[Misir Queue] Retry failed for ${item.id}: ${errorMsg}`,
+          `Will retry at ${new Date(calculateNextRetry(item.retries + 1)).toISOString()}`
+        );
+      }
+    }
+
+    return {
+      processed: ready.length,
+      succeeded,
+      failed,
+    };
+  })();
+
+  try {
+    return await activeQueueProcess;
+  } finally {
+    activeQueueProcess = null;
+  }
 }
 
 /**

@@ -24,11 +24,14 @@ export default function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
 
   // Form state
-  const [userId, setUserId] = useState('');
   const [apiUrl, setApiUrl] = useState('');
   const [minWords, setMinWords] = useState(50);
   const [minDwell, setMinDwell] = useState(3000);
   const [enabled, setEnabled] = useState(true);
+  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
+  const [autoCaptureConfidence, setAutoCaptureConfidence] = useState(70);
+  const [autoCaptureCooldownMin, setAutoCaptureCooldownMin] = useState(30);
+  const [autoCaptureSpaceId, setAutoCaptureSpaceId] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -40,11 +43,18 @@ export default function App() {
       if (cfgResp.success) {
         const c = cfgResp.data as SensorConfig;
         setConfig(c);
-        setUserId(c.userId);
         setApiUrl(c.apiUrl);
         setMinWords(c.minWordCount);
         setMinDwell(c.minDwellTimeMs);
         setEnabled(c.enabled);
+        setAutoCaptureEnabled(c.autoCaptureEnabled);
+        setAutoCaptureConfidence(Math.round((c.autoCaptureConfidenceThreshold ?? 0.55) * 100));
+        setAutoCaptureCooldownMin(Math.max(1, Math.round((c.autoCaptureCooldownMs ?? 1800000) / 60000)));
+        setAutoCaptureSpaceId(
+          typeof c.autoCaptureSpaceId === 'number' && c.autoCaptureSpaceId > 0
+            ? String(c.autoCaptureSpaceId)
+            : ''
+        );
       }
 
       const hResp = await sendMessage({ type: 'HEALTH_CHECK' });
@@ -59,9 +69,26 @@ export default function App() {
   }, []);
 
   const handleSave = async () => {
+    const parsedSpaceId = Number(autoCaptureSpaceId);
+    const configUpdate: Partial<SensorConfig> = {
+      apiUrl,
+      minWordCount: minWords,
+      minDwellTimeMs: minDwell,
+      enabled,
+      autoCaptureEnabled,
+      autoCaptureConfidenceThreshold: Math.min(1, Math.max(0, autoCaptureConfidence / 100)),
+      autoCaptureCooldownMs: Math.max(60000, autoCaptureCooldownMin * 60000),
+      autoCaptureSpaceId:
+        autoCaptureSpaceId.trim() === ''
+          ? undefined
+          : Number.isInteger(parsedSpaceId) && parsedSpaceId > 0
+            ? parsedSpaceId
+            : undefined,
+    };
+
     await sendMessage({
       type: 'SET_CONFIG',
-      config: { userId, apiUrl, minWordCount: minWords, minDwellTimeMs: minDwell, enabled },
+      config: configUpdate,
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -85,7 +112,7 @@ export default function App() {
           <Compass className="w-8 h-8 text-misir-accent" />
           <div>
             <h1 className="text-xl font-bold">Misir Sensor Settings</h1>
-            <p className="text-sm text-misir-muted">Extension v0.2.0 — NLP + Nomic 1.5 pipeline</p>
+            <p className="text-sm text-misir-muted">Extension v0.2.0 — Backend Classifier + Nomic 1.5 pipeline</p>
           </div>
         </div>
 
@@ -115,7 +142,7 @@ export default function App() {
             </div>
           ) : (
             <div className="text-sm text-misir-muted space-y-1">
-              <p>Not authenticated — using mock user ID</p>
+              <p>Not authenticated</p>
               <p className="text-xs">Sign in from the popup to use your Supabase account</p>
             </div>
           )}
@@ -130,7 +157,7 @@ export default function App() {
               value={healthy === null ? 'Checking…' : healthy ? 'Connected' : 'Offline'}
               ok={healthy === true}
             />
-            <DiagItem label="NLP Engine" value={nlpReady ? 'wink-nlp' : 'Fallback'} ok={nlpReady} />
+            <DiagItem label="Classifier" value={nlpReady ? 'Backend' : 'Unavailable'} ok={nlpReady} />
             <DiagItem label="Embeddings" value="Nomic 1.5 (server)" ok={healthy === true} />
             <DiagItem label="Recent Captures" value={String(recent.length)} ok={true} />
           </div>
@@ -141,12 +168,46 @@ export default function App() {
           <h2 className="text-sm font-semibold">Configuration</h2>
 
           <div className="space-y-3">
-            <Field label="User ID" value={userId} onChange={setUserId} />
             <Field label="API URL" value={apiUrl} onChange={setApiUrl} />
             <div className="grid grid-cols-2 gap-3">
               <Field label="Min Word Count" value={String(minWords)} onChange={(v) => setMinWords(Number(v))} type="number" />
               <Field label="Min Dwell Time (ms)" value={String(minDwell)} onChange={(v) => setMinDwell(Number(v))} type="number" />
             </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm">Auto Capture</span>
+              <button
+                onClick={() => setAutoCaptureEnabled(!autoCaptureEnabled)}
+                className={`w-10 h-5 rounded-full transition-colors duration-200 ${
+                  autoCaptureEnabled ? 'bg-misir-accent' : 'bg-misir-border'
+                } relative`}
+              >
+                <span
+                  className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform duration-200 ${
+                    autoCaptureEnabled ? 'left-5' : 'left-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field
+                label="Auto Confidence (%)"
+                value={String(autoCaptureConfidence)}
+                onChange={(v) => setAutoCaptureConfidence(Number(v))}
+                type="number"
+              />
+              <Field
+                label="Auto Cooldown (min)"
+                value={String(autoCaptureCooldownMin)}
+                onChange={(v) => setAutoCaptureCooldownMin(Number(v))}
+                type="number"
+              />
+            </div>
+            <Field
+              label="Auto Space ID (optional)"
+              value={autoCaptureSpaceId}
+              onChange={setAutoCaptureSpaceId}
+              type="number"
+            />
             <div className="flex items-center justify-between">
               <span className="text-sm">Sensor Enabled</span>
               <button
@@ -220,3 +281,4 @@ function Field({
     </div>
   );
 }
+

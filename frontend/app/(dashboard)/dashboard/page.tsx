@@ -2,12 +2,14 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useQueries } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/use-auth';
 import { useSpaces, useAllSpaceAlerts } from '@/lib/api/spaces';
 import { useAllUserArtifacts } from '@/lib/api/artifacts';
 import { AlertCircle, Layers, ArrowRight, TrendingUp } from 'lucide-react';
 import { getSpaceStatus, getFocusDots, formatRelativeTime } from '@/lib/formatters';
 import { getSpaceColor } from '@/lib/colors';
+import api from '@/lib/api/client';
 import { SpaceCard } from '@/components/dashboard/space-card';
 import { OnboardingModal } from '@/components/dashboard/onboarding-modal';
 import { ActivityChart } from '@/components/dashboard/activity-chart';
@@ -43,6 +45,46 @@ export default function DashboardPage() {
     // Priority Queue: Spaces that need attention (low artifact count)
     const prioritySpaces = spaces.filter(s => s.artifact_count < 3);
     const activeSpaces = spaces.filter(s => s.artifact_count >= 3);
+
+    const analyticsQueries = useQueries({
+        queries: activeSpaces.map((space) => ({
+            queryKey: ['analytics', 'space-card', space.id, user?.id],
+            queryFn: () => api.analytics.space(space.id),
+            enabled: !!user?.id,
+            staleTime: 10_000,
+            refetchOnWindowFocus: 'always' as const,
+            refetchOnReconnect: true,
+            refetchInterval: 30_000,
+        })),
+    });
+
+    const alertsBySpaceId = allAlerts.reduce<Map<number, SpaceAlert[]>>((map, alert) => {
+        const current = map.get(alert.space_id) ?? [];
+        current.push(alert);
+        map.set(alert.space_id, current);
+        return map;
+    }, new Map());
+
+    const getConfidenceFromArtifacts = (spaceId: number) => {
+        const relevant = allArtifacts.filter((artifact) => artifact.space_id === spaceId);
+        if (relevant.length === 0) return 0;
+        const weights: Record<string, number> = {
+            latent: 0.25,
+            discovered: 0.5,
+            engaged: 0.75,
+            saturated: 1.0,
+        };
+        const score = relevant.reduce((sum, artifact) => sum + (weights[artifact.engagement_level] ?? 0.25), 0);
+        return Math.max(0, Math.min(1, score / relevant.length));
+    };
+
+    const getAverageMargin = (spaceId: number) => {
+        const margins = allArtifacts
+            .filter((artifact) => artifact.space_id === spaceId && typeof artifact.margin === 'number')
+            .map((artifact) => artifact.margin as number);
+        if (margins.length === 0) return undefined;
+        return margins.reduce((sum, margin) => sum + margin, 0) / margins.length;
+    };
 
     // Onboarding state (Job 11)
     const [dismissedOnboarding, setDismissedOnboarding] = useState(() => hasCompletedOnboarding());
@@ -124,20 +166,28 @@ export default function DashboardPage() {
                         <div className="text-sm text-[#5F646D]">Loading spaces...</div>
                     ) : activeSpaces.length === 0 && prioritySpaces.length === 0 ? (
                          <div className="text-sm text-[#5F646D] border border-dashed border-white/10 p-8 rounded-lg text-center">
-                            No active spaces found. <Link href="/dashboard/wizard" className="text-[#5E6AD2] hover:underline">Create your first space</Link>.
+                            No active spaces found. <Link href="/onboarding" className="text-[#5E6AD2] hover:underline">Create your first space</Link>.
                          </div>
                     ) : activeSpaces.length === 0 ? (
                         <div className="text-sm text-[#5F646D] p-4">All spaces need attention. Check the queue above.</div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {activeSpaces.map(space => {
-                                // Default "Job 8" status logic (placeholder until analytics are ready)
+                            {activeSpaces.map((space, index) => {
+                                const analytics = analyticsQueries[index]?.data;
+                                const confidenceFromAnalytics =
+                                    analytics && analytics.subspace_health.length > 0
+                                        ? analytics.subspace_health.reduce((acc, item) => acc + item.confidence, 0) / analytics.subspace_health.length
+                                        : undefined;
+                                const confidence = confidenceFromAnalytics ?? getConfidenceFromArtifacts(space.id);
+                                const spaceAlerts = alertsBySpaceId.get(space.id) ?? [];
+                                const hasHighDrift = spaceAlerts.some((alert) => alert.type === 'high_drift');
+                                const avgMargin = getAverageMargin(space.id);
                                 const status = getSpaceStatus({
-                                    confidence: space.artifact_count > 10 ? 0.75 : 0.5,
-                                    drift: 0.1,
-                                    avg_margin: 0.4
+                                    confidence,
+                                    drift: hasHighDrift ? 0.35 : undefined,
+                                    avg_margin: avgMargin,
                                 });
-                                const focusDots = getFocusDots(space.artifact_count > 10 ? 0.75 : 0.5);
+                                const focusDots = getFocusDots(confidence);
 
                                 return (
                                     <SpaceCard

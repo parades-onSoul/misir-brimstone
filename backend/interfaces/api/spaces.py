@@ -8,7 +8,7 @@ Endpoints:
 
 Uses RFC 9457 Problem Details for standardized error responses.
 """
-from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request, Header, HTTPException
 from fastapi_problem.error import Problem
 from pydantic import BaseModel
 from typing import Optional
@@ -20,7 +20,8 @@ from core.logging_config import get_logger
 from application.handlers.space_handler import (
     SpaceHandler, 
     CreateSpaceCommand, 
-    ListSpacesCommand
+    ListSpacesCommand,
+    UpdateSpaceCommand,
 )
 from application.handlers.artifact_handler import ArtifactHandler
 from infrastructure.repositories import ArtifactRepository
@@ -47,11 +48,17 @@ class CreateSubspaceInput(BaseModel):
 
 class CreateSpaceRequest(BaseModel):
     """Request to create a space."""
-    user_id: Optional[str] = None  # Can come from JWT
+    user_id: Optional[str] = None  # Deprecated: user identity comes from JWT
     name: str
     description: Optional[str] = None
     intention: Optional[str] = None
     subspaces: list[CreateSubspaceInput] = []
+
+
+class UpdateSpaceRequest(BaseModel):
+    """Request to update mutable space fields."""
+    name: Optional[str] = None
+    description: Optional[str] = None
 
 
 class SpaceResponse(BaseModel):
@@ -95,6 +102,11 @@ class SpaceArtifactResponse(BaseModel):
     margin: Optional[float]
     engagement_level: str
     dwell_time_ms: int
+    reading_depth: Optional[float] = None
+    word_count: Optional[int] = None
+    content_source: Optional[str] = None
+    reading_time_min: Optional[float] = None
+    captured_at: Optional[datetime] = None
     created_at: datetime
 
 
@@ -139,13 +151,37 @@ def get_supabase_client() -> Client:
     return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY or settings.SUPABASE_KEY)
 
 
+def get_current_user(
+    authorization: str = Header(None),
+    client: Client = Depends(get_supabase_client)
+) -> str:
+    """Extract user_id from Bearer JWT token."""
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="Authorization header required")
+
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Invalid authorization format")
+
+        token = authorization.split(" ")[1]
+        user = client.auth.get_user(token)
+        if not user or not user.user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        return user.user.id
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {e}")
+
+
 from core.limiter import limiter
 
 @router.get("", response_model=SpaceListResponse)
 @limiter.limit("50/minute")
 async def list_spaces(
     request: Request,
-    user_id: str,
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client)
 ):
     """
@@ -162,7 +198,7 @@ async def list_spaces(
         Problem (500): If an unexpected error occurs
     """
     handler = SpaceHandler(client)
-    cmd = ListSpacesCommand(user_id=user_id)
+    cmd = ListSpacesCommand(user_id=current_user_id)
     results = await handler.list(cmd)
     
     return SpaceListResponse(
@@ -185,6 +221,7 @@ async def list_spaces(
 async def create_space(
     request: Request,
     body: CreateSpaceRequest,
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client)
 ):
     """
@@ -202,9 +239,6 @@ async def create_space(
     """
     handler = SpaceHandler(client)
     
-    # Extract user_id from body or use default (should come from JWT in production)
-    user_id = body.user_id if body.user_id else "anonymous"
-    
     # Convert subspaces to dict format
     subspaces_data = [
         {
@@ -219,7 +253,7 @@ async def create_space(
     ] if body.subspaces else []
     
     cmd = CreateSpaceCommand(
-        user_id=user_id,
+        user_id=current_user_id,
         name=body.name,
         description=body.description,
         intention=body.intention,
@@ -241,15 +275,15 @@ async def create_space(
 async def delete_space(
     request: Request,
     space_id: int = Path(..., description="Space ID"),
-    user_id: str = Query(..., description="Owner user ID"),
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client)
 ):
     """Delete a space for the given user."""
     handler = SpaceHandler(client)
     try:
-        deleted = await handler.delete(space_id, user_id)
+        deleted = await handler.delete(space_id, current_user_id)
     except Exception as e:
-        logger.error("Failed to delete space", extra={"space_id": space_id, "user_id": user_id, "error": str(e)})
+        logger.error("Failed to delete space", extra={"space_id": space_id, "user_id": current_user_id, "error": str(e)})
         raise Problem(
             status=500,
             title="Delete Failed",
@@ -273,7 +307,7 @@ async def delete_space(
 async def get_space(
     request: Request,
     space_id: int,
-    user_id: str,
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client)
 ):
     """
@@ -291,7 +325,7 @@ async def get_space(
         Problem (500): If an unexpected error occurs
     """
     handler = SpaceHandler(client)
-    result = await handler.get(space_id, user_id)
+    result = await handler.get(space_id, current_user_id)
     
     if result is None:
         raise Problem(
@@ -310,12 +344,62 @@ async def get_space(
     )
 
 
+@router.patch("/{space_id}", response_model=SpaceResponse)
+@limiter.limit("50/minute")
+async def update_space(
+    request: Request,
+    body: UpdateSpaceRequest,
+    space_id: int = Path(..., description="Space ID"),
+    current_user_id: str = Depends(get_current_user),
+    client: Client = Depends(get_supabase_client)
+):
+    """
+    Update mutable fields for a space.
+
+    Supported fields:
+    - name
+    - description
+    """
+    if body.name is None and body.description is None:
+        raise Problem(
+            status=400,
+            title="Bad Request",
+            detail="At least one field must be provided",
+            type_="validation-error"
+        )
+
+    handler = SpaceHandler(client)
+    cmd = UpdateSpaceCommand(
+        space_id=space_id,
+        user_id=current_user_id,
+        name=body.name,
+        description=body.description,
+    )
+    result = await handler.update(cmd)
+
+    if result is None:
+        raise Problem(
+            status=404,
+            title="Not Found",
+            detail=f"Space with id {space_id} not found",
+            type_="space-not-found"
+        )
+
+    return SpaceResponse(
+        id=result.id,
+        name=result.name,
+        description=result.description,
+        user_id=result.user_id,
+        artifact_count=result.artifact_count
+    )
+
+
 @router.get("/{space_id}/timeline", response_model=TimelineResponse)
 @limiter.limit("50/minute")
 async def get_space_timeline(
     request: Request,
     space_id: int,
-    user_id: str,
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client)
 ):
     """
@@ -335,7 +419,7 @@ async def get_space_timeline(
     handler = SpaceHandler(client)
     
     # Check if space exists first
-    space = await handler.get(space_id, user_id)
+    space = await handler.get(space_id, current_user_id)
     if space is None:
         raise Problem(
             status=404,
@@ -344,7 +428,7 @@ async def get_space_timeline(
             type_="space-not-found"
         )
         
-    artifacts = await handler.get_timeline(space_id, user_id)
+    artifacts = await handler.get_timeline(space_id, current_user_id)
     
     return TimelineResponse(
         artifacts=[
@@ -366,7 +450,7 @@ async def get_space_timeline(
 async def get_space_artifacts(
     request: Request,
     space_id: int,
-    user_id: str = Query(..., description="User ID"),
+    current_user_id: str = Depends(get_current_user),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(50, ge=1, le=100, description="Items per page"),
     subspace_id: Optional[int] = Query(None, description="Filter by subspace"),
@@ -397,7 +481,7 @@ async def get_space_artifacts(
     handler = SpaceHandler(client)
     
     # Check if space exists
-    space = await handler.get(space_id, user_id)
+    space = await handler.get(space_id, current_user_id)
     if space is None:
         raise Problem(
             status=404,
@@ -411,7 +495,7 @@ async def get_space_artifacts(
     artifact_handler = ArtifactHandler(repo)
     
     result = await artifact_handler.get_paginated(
-        user_id=user_id,
+        user_id=current_user_id,
         space_id=space_id,
         page=page,
         limit=page_size,
@@ -455,7 +539,12 @@ async def get_space_artifacts(
             engagement_level=item.get('engagement_level', 'latent'),
             subspace_id=item.get('subspace_id'),
             margin=margin,
-            dwell_time_ms=item.get('dwell_time_ms', 0)
+            dwell_time_ms=item.get('dwell_time_ms', 0),
+            reading_depth=item.get('reading_depth'),
+            word_count=item.get('word_count'),
+            content_source=item.get('content_source'),
+            reading_time_min=item.get('reading_time_min'),
+            captured_at=item.get('captured_at'),
         ))
         
     return SpaceArtifactsListResponse(
@@ -471,7 +560,7 @@ async def get_space_artifacts(
 async def get_space_alerts(
     request: Request,
     space_id: int,
-    user_id: str,
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client)
 ):
     """
@@ -497,7 +586,7 @@ async def get_space_alerts(
     handler = SpaceHandler(client)
     
     # Check if space exists
-    space = await handler.get(space_id, user_id)
+    space = await handler.get(space_id, current_user_id)
     if space is None:
         raise Problem(
             status=404,

@@ -18,14 +18,14 @@ export interface GenerateSpaceOptions {
  * Generate a complete space with AI-powered subspaces and markers
  * 
  * Flow:
- * 1. Gemini generates subspaces + markers
+ * 1. Groq generates subspaces + markers
  * 2. Format for backend API
  * 3. Return CreateSpaceRequest ready to send
  */
 export async function generateSpace(
   options: GenerateSpaceOptions
 ): Promise<CreateSpaceRequest> {
-  // Step 1: Generate subspaces using Gemini AI
+  // Step 1: Generate subspaces using Groq AI
   const aiSubspaces = await generateWithFallback({
     spaceName: options.name,
     description: options.description,
@@ -72,9 +72,9 @@ export function estimateGenerationCost(spaceName: string, description?: string, 
   // Output is typically 5-7 subspaces × 4-6 markers × ~10 tokens per marker
   const estimatedOutputTokens = 2000; // Conservative estimate
 
-  // Gemini pricing (Feb 2026 rates)
-  const inputCostPer1M = 0.075; // $0.075 per 1M input tokens
-  const outputCostPer1M = 0.30; // $0.30 per 1M output tokens
+  // Groq pricing (update with current rates)
+  const inputCostPer1M = 0; // Placeholder
+  const outputCostPer1M = 0; // Placeholder
 
   const estimatedCostUSD =
     (estimatedInputTokens / 1_000_000) * inputCostPer1M +

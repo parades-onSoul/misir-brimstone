@@ -20,9 +20,10 @@ interface ItemDetailModalProps {
 }
 
 const engagementColors: Record<string, string> = {
-    ambient: 'bg-gray-500/10 text-gray-400',
+    latent: 'bg-gray-500/10 text-gray-400',
+    discovered: 'bg-indigo-500/10 text-indigo-400',
     engaged: 'bg-blue-500/10 text-blue-400',
-    committed: 'bg-amber-500/10 text-amber-400',
+    saturated: 'bg-amber-500/10 text-amber-400',
 };
 
 export function ItemDetailModal({
@@ -46,7 +47,7 @@ export function ItemDetailModal({
                                 {item.domain}
                             </DialogDescription>
                         </div>
-                        <Badge className={engagementColors[item.engagement_level] || engagementColors.ambient}>
+                        <Badge className={engagementColors[item.engagement_level] || engagementColors.latent}>
                             {item.engagement_level}
                         </Badge>
                     </div>

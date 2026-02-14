@@ -43,7 +43,7 @@ class TestSearchHandlerIntegration:
         # Valid command
         cmd = SearchCommand(user_id="user-123", query="test query")
         assert cmd.limit == 20
-        assert cmd.threshold == 0.7
+        assert cmd.threshold == 0.55
         
         # Empty query should fail
         with pytest.raises(ValueError, match="query is required"):
@@ -69,7 +69,9 @@ class TestSearchHandlerIntegration:
             url="http://test.com",
             content_preview=None,
             space_id=1,
-            subspace_id=None
+            subspace_id=None,
+            engagement_level="discovered",
+            dwell_time_ms=120000,
         )
         
         # Distance = 1 - similarity

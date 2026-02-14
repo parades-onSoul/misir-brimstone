@@ -21,9 +21,9 @@ export const useSearchStore = create<SearchState>((set) => ({
     
     filters: {
         limit: 20,
-        threshold: 0.7,
+        threshold: 0.55,
     },
     setFilters: (filters) => set({ filters }),
     
-    clearAll: () => set({ query: '', filters: { limit: 20, threshold: 0.7 } }),
+    clearAll: () => set({ query: '', filters: { limit: 20, threshold: 0.55 } }),
 }));

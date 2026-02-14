@@ -31,7 +31,7 @@ async def test_add_marker(mock_client):
         'subspace_id': 10,
         'marker_id': 20,
         'weight': 1.0,  # default
-        'source': 'manual' # default
+        'source': 'user_defined' # default
     })
 
 @pytest.mark.asyncio
@@ -61,5 +61,5 @@ async def test_get_markers(mock_client):
     
     assert results == expected_data
     mock_client.from_.assert_called_with('subspace_marker')
-    mock_client.select.assert_called_with('weight, source, marker:marker_id(id, term, embedding)')
+    mock_client.select.assert_called_with('weight, source, marker:marker_id(id, label, embedding)')
     mock_client.eq.assert_called_with('subspace_id', 10)

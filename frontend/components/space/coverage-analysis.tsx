@@ -6,6 +6,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Subspace } from '@/types/api';
 import { useSpaceArtifacts } from '@/lib/api/spaces';
 import { getFocusLabel, formatRelativeTime, truncateText } from '@/lib/formatters';
+import {
+  FOCUS_CONFIDENCE_HIGH_THRESHOLD,
+  FOCUS_CONFIDENCE_MEDIUM_THRESHOLD,
+} from '@/lib/focus-thresholds';
 import { cn } from '@/lib/utils';
 
 interface CoverageAnalysisProps {
@@ -58,12 +62,12 @@ export function CoverageAnalysis({ subspaces, spaceId, userId }: CoverageAnalysi
     const gapBucket: TopicSummary[] = [];
 
     topicSummaries.forEach((topic) => {
-      if (topic.count >= 8 && topic.confidence > 0.7) {
+      if (topic.count >= 8 && topic.confidence > FOCUS_CONFIDENCE_HIGH_THRESHOLD) {
         masteredBucket.push(topic);
         return;
       }
 
-      if (topic.count < 3 && topic.confidence < 0.4) {
+      if (topic.count < 3 && topic.confidence < FOCUS_CONFIDENCE_MEDIUM_THRESHOLD) {
         gapBucket.push(topic);
         return;
       }

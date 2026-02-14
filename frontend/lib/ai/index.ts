@@ -1,9 +1,16 @@
 /**
  * AI Module Exports
  * 
- * Centralized exports for Gemini AI integration
+ * Centralized exports for Groq AI integration
  */
 
 export { generateSubspacesWithMarkers, generateWithFallback } from './groq';
-export { selectPromptMode, type PromptMode, type SubspaceWithMarkers } from './groq-prompts';
-export { validateGeminiOutput, isQualityMarker } from './validation';
+export {
+  classifyPromptMode,
+  selectPromptMode,
+  type PromptMode,
+  type PromptModeClassification,
+  type PromptModeClassifierOptions,
+  type SubspaceWithMarkers,
+} from './groq-prompts';
+export { validateGroqOutput, isQualityMarker } from './validation';

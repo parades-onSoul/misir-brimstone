@@ -7,18 +7,18 @@ import type { SearchResponse } from '@/types/api';
 
 export interface UseSearchOptions {
     query: string;
-    userId: string;
     spaceId?: number;
     limit?: number;
+    threshold?: number;
     enabled?: boolean;
 }
 
 /**
  * Search artifacts by semantic similarity
  */
-export function useSearch({ query, userId, spaceId, limit = 20, enabled = true }: UseSearchOptions) {
+export function useSearch({ query, spaceId, limit = 20, threshold, enabled = true }: UseSearchOptions) {
     return useQuery<SearchResponse>({
-        queryKey: ['search', query, spaceId, limit],
+        queryKey: ['search', query, spaceId, limit, threshold],
         queryFn: async () => {
             if (!query.trim()) {
                 return {
@@ -28,7 +28,11 @@ export function useSearch({ query, userId, spaceId, limit = 20, enabled = true }
                     dimension_used: 0,
                 };
             }
-            return api.search(query, userId, spaceId, limit);
+            return api.search(query, {
+                space_id: spaceId,
+                limit,
+                threshold,
+            });
         },
         enabled: enabled && query.trim().length > 0,
         staleTime: 1000 * 60 * 5, // 5 minutes

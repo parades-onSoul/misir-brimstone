@@ -1,7 +1,7 @@
-# Misir Database Schema — Latest
+# Misir Database Schema - Latest
 
-> **Current Version:** v1.4 (with v1.0 as base)  
-> **Codename:** shiro.exe  
+> **Current Version:** v1.5 (with v1.0 as base)
+> **Codename:** shiro.exe
 > **Date:** February 2026
 
 ---
@@ -10,11 +10,12 @@
 
 | Version | Description | Status |
 |---------|-------------|--------|
-| [**v1.4**](../v1.4/) | Analytics Support | ✅ Latest |
-| [v1.3](../v1.3/) | Webhook Support | 📦 Stable |
-| [v1.2](../v1.2/) | Enum Alignment | 📦 Stable |
-| [v1.1](../v1.1/) | Assignment Margin | 📦 Stable |
-| [v1.0](../v1.0/) | Production base | 📦 Stable |
+| [**v1.5**](../v1.5/) | Matryoshka Coarse-to-Fine | Latest |
+| [v1.4](../v1.4/) | Analytics Support | Stable |
+| [v1.3](../v1.3/) | Webhook Support | Stable |
+| [v1.2](../v1.2/) | Enum Alignment | Stable |
+| [v1.1](../v1.1/) | Assignment Margin | Stable |
+| [v1.0](../v1.0/) | Production base | Stable |
 
 ---
 
@@ -22,7 +23,7 @@
 
 ### Fresh Install
 
-Deploy v1.0 base schema, then apply v1.1 migration:
+Deploy v1.0 base schema, then apply migrations:
 
 ```bash
 # Deploy base schema
@@ -36,16 +37,17 @@ psql misir -f ../v1.1/migration.sql
 psql misir -f ../v1.2/migration.sql
 psql misir -f ../v1.3/migration.sql
 psql misir -f ../v1.4/migration.sql
+psql misir -f ../v1.5/matryoshka-search-migration.sql
 ```
 
-### Upgrade from v1.3
+### Upgrade from v1.4
 
 ```bash
 # Backup first
-pg_dump misir > backup_pre_v1.4.sql
+pg_dump misir > backup_pre_v1.5.sql
 
-# Apply v1.4 migration
-psql misir -f ../v1.4/migration.sql
+# Apply v1.5 migration
+psql misir -f ../v1.5/matryoshka-search-migration.sql
 ```
 
 ### Upgrade from v1.0
@@ -59,6 +61,7 @@ psql misir -f ../v1.1/migration.sql
 psql misir -f ../v1.2/migration.sql
 psql misir -f ../v1.3/migration.sql
 psql misir -f ../v1.4/migration.sql
+psql misir -f ../v1.5/matryoshka-search-migration.sql
 ```
 
 ---
@@ -102,6 +105,7 @@ psql misir -f ../v1.4/migration.sql
 | **SDD** | Semantic Drift Detection |
 | **ISS** | Implicit Semantic Search (HNSW) |
 | **Assignment Margin** | Prevents centroid pollution (v1.1) |
+| **Matryoshka C2F** | 384d prefilter + 768d rerank (v1.5) |
 
 ---
 
@@ -121,12 +125,18 @@ Key settings in `system_config`:
 
 ## Version History
 
-### v1.1 — Assignment Margin
+### v1.5 - Matryoshka Coarse-to-Fine
+- Added `signal.vector_384` and `subspace.centroid_embedding_384`
+- Added HNSW indexes for 384d fast candidate retrieval
+- Added `search_signals_by_vector_matryoshka()` RPC
+- Added `calculate_assignment_margin_matryoshka()` RPC
+
+### v1.1 - Assignment Margin
 - Added `margin` and `updates_centroid` columns to signal
 - Modified centroid trigger to skip low-margin signals
 - Added `calculate_assignment_margin()` RPC
 
-### v1.0 — Production Base
+### v1.0 - Production Base
 - 12 tables, 6 enums, 8 functions, 5 triggers
 - Full RLS policies
 - Vector search with HNSW indexing

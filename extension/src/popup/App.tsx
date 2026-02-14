@@ -3,9 +3,8 @@
  *
  * Four views:
  *   1. Login   (Supabase auth — email/password)
- *   2. Setup   (fallback — manual userId/apiUrl for mock auth)
- *   3. Main    (page info, space selector, capture, recent, NLP status)
- *   4. Settings (change config, diagnostics)
+ *   2. Main    (page info, space selector, capture, recent, classifier status)
+ *   3. Settings (change config, diagnostics)
  */
 import React, { useEffect, useState, useCallback } from 'react';
 import {
@@ -26,7 +25,6 @@ import {
   LogOut,
   Mail,
   Lock,
-  User,
 } from 'lucide-react';
 import type {
   SensorConfig,
@@ -62,10 +60,20 @@ function timeAgo(iso: string): string {
 }
 
 const ENGAGEMENT_COLORS: Record<EngagementLevel, string> = {
-  ambient: 'badge-ambient',
+  latent: 'badge-latent',
+  discovered: 'badge-discovered',
   engaged: 'badge-engaged',
-  committed: 'badge-committed',
+  saturated: 'badge-saturated',
 };
+
+function getEngagementBadgeClass(level: string): string {
+  if (level in ENGAGEMENT_COLORS) {
+    return ENGAGEMENT_COLORS[level as EngagementLevel];
+  }
+  if (level === 'ambient') return 'badge-latent';
+  if (level === 'committed') return 'badge-saturated';
+  return 'badge-latent';
+}
 
 function getScoreColor(score: number): string {
   // score is 0-100
@@ -79,10 +87,8 @@ function getScoreColor(score: number): string {
 
 function LoginView({
   onLogin,
-  onSkip,
 }: {
   onLogin: (email: string, password: string) => Promise<void>;
-  onSkip: () => void;
 }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -154,67 +160,6 @@ function LoginView({
         </button>
       </form>
 
-      <div className="relative">
-        <div className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-misir-border" />
-        </div>
-        <div className="relative flex justify-center text-[10px]">
-          <span className="bg-misir-bg px-2 text-misir-muted">or</span>
-        </div>
-      </div>
-
-      <button
-        onClick={onSkip}
-        className="w-full py-2 rounded-lg bg-misir-surface border border-misir-border text-sm text-misir-muted hover:text-misir-text hover:border-misir-accent/50 transition"
-      >
-        Continue with Mock Auth
-      </button>
-    </div>
-  );
-}
-
-// ── Setup View (Mock Auth fallback) ──────────────────
-
-function SetupView({ onConnect }: { onConnect: (config: Partial<SensorConfig>) => void }) {
-  const [userId, setUserId] = useState('test-user-123');
-  const [apiUrl, setApiUrl] = useState('http://localhost:8000/api/v1');
-
-  return (
-    <div className="p-4 space-y-4">
-      <div className="text-center space-y-2 pt-4">
-        <Compass className="w-10 h-10 text-misir-accent mx-auto" />
-        <h1 className="text-lg font-semibold">Misir Sensor</h1>
-        <p className="text-sm text-misir-muted">Configure your connection</p>
-      </div>
-
-      <div className="space-y-3">
-        <div>
-          <label className="text-xs text-misir-muted block mb-1">User ID</label>
-          <input
-            className="w-full px-3 py-2 rounded-lg bg-misir-surface border border-misir-border text-sm text-misir-text focus:border-misir-accent focus:outline-none"
-            value={userId}
-            onChange={(e) => setUserId(e.target.value)}
-            placeholder="test-user-123"
-          />
-        </div>
-        <div>
-          <label className="text-xs text-misir-muted block mb-1">API URL</label>
-          <input
-            className="w-full px-3 py-2 rounded-lg bg-misir-surface border border-misir-border text-sm text-misir-text focus:border-misir-accent focus:outline-none"
-            value={apiUrl}
-            onChange={(e) => setApiUrl(e.target.value)}
-            placeholder="http://localhost:8000/api/v1"
-          />
-        </div>
-      </div>
-
-      <button
-        onClick={() => onConnect({ userId, apiUrl })}
-        disabled={!userId}
-        className="w-full py-2.5 rounded-lg bg-misir-accent text-white text-sm font-medium hover:bg-blue-600 transition disabled:opacity-40"
-      >
-        Connect
-      </button>
     </div>
   );
 }
@@ -232,10 +177,16 @@ function SettingsView({
   onBack: () => void;
   nlpStatus: boolean;
 }) {
-  const [userId, setUserId] = useState(config.userId);
   const [apiUrl, setApiUrl] = useState(config.apiUrl);
   const [minWords, setMinWords] = useState(config.minWordCount);
   const [minDwell, setMinDwell] = useState(config.minDwellTimeMs);
+  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(config.autoCaptureEnabled);
+  const [autoCaptureConfidence, setAutoCaptureConfidence] = useState(
+    Math.round(config.autoCaptureConfidenceThreshold * 100)
+  );
+  const [autoCaptureCooldownMin, setAutoCaptureCooldownMin] = useState(
+    Math.max(1, Math.round(config.autoCaptureCooldownMs / 60000))
+  );
 
   return (
     <div className="p-4 space-y-4">
@@ -247,14 +198,6 @@ function SettingsView({
       </div>
 
       <div className="space-y-3">
-        <div>
-          <label className="text-xs text-misir-muted block mb-1">User ID</label>
-          <input
-            className="w-full px-3 py-2 rounded-lg bg-misir-surface border border-misir-border text-sm"
-            value={userId}
-            onChange={(e) => setUserId(e.target.value)}
-          />
-        </div>
         <div>
           <label className="text-xs text-misir-muted block mb-1">API URL</label>
           <input
@@ -283,6 +226,44 @@ function SettingsView({
             />
           </div>
         </div>
+        <div className="flex items-center justify-between rounded-lg border border-misir-border bg-misir-surface px-3 py-2">
+          <span className="text-xs text-misir-muted uppercase tracking-wider">Auto Capture</span>
+          <button
+            onClick={() => setAutoCaptureEnabled((prev) => !prev)}
+            className={`w-10 h-5 rounded-full transition-colors duration-200 ${
+              autoCaptureEnabled ? 'bg-misir-accent' : 'bg-misir-border'
+            } relative`}
+          >
+            <span
+              className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform duration-200 ${
+                autoCaptureEnabled ? 'left-5' : 'left-0.5'
+              }`}
+            />
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-xs text-misir-muted block mb-1">Auto Confidence (%)</label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              className="w-full px-3 py-2 rounded-lg bg-misir-surface border border-misir-border text-sm"
+              value={autoCaptureConfidence}
+              onChange={(e) => setAutoCaptureConfidence(Number(e.target.value))}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-misir-muted block mb-1">Auto Cooldown (min)</label>
+            <input
+              type="number"
+              min={1}
+              className="w-full px-3 py-2 rounded-lg bg-misir-surface border border-misir-border text-sm"
+              value={autoCaptureCooldownMin}
+              onChange={(e) => setAutoCaptureCooldownMin(Number(e.target.value))}
+            />
+          </div>
+        </div>
       </div>
 
       {/* Diagnostics */}
@@ -290,10 +271,10 @@ function SettingsView({
         <h3 className="text-xs font-medium text-misir-muted uppercase tracking-wider">Diagnostics</h3>
         <div className="flex items-center justify-between text-sm">
           <span className="text-misir-muted flex items-center gap-1.5">
-            <Brain className="w-3.5 h-3.5" /> NLP Engine
+            <Brain className="w-3.5 h-3.5" /> Classifier
           </span>
           <span className={nlpStatus ? 'text-misir-success' : 'text-misir-warning'}>
-            {nlpStatus ? 'wink-nlp ✓' : 'Fallback mode'}
+            {nlpStatus ? 'Backend ✓' : 'Unavailable'}
           </span>
         </div>
         <div className="flex items-center justify-between text-sm">
@@ -303,7 +284,16 @@ function SettingsView({
       </div>
 
       <button
-        onClick={() => onSave({ userId, apiUrl, minWordCount: minWords, minDwellTimeMs: minDwell })}
+        onClick={() =>
+          onSave({
+            apiUrl,
+            minWordCount: minWords,
+            minDwellTimeMs: minDwell,
+            autoCaptureEnabled,
+            autoCaptureConfidenceThreshold: Math.min(1, Math.max(0, autoCaptureConfidence / 100)),
+            autoCaptureCooldownMs: Math.max(60000, autoCaptureCooldownMin * 60000),
+          })
+        }
         className="w-full py-2.5 rounded-lg bg-misir-accent text-white text-sm font-medium hover:bg-blue-600 transition"
       >
         Save & Back
@@ -351,7 +341,7 @@ function MainView({
       setBackendHealthy(r.success && r.data?.healthy);
     });
 
-    // NLP status
+    // Classifier status
     sendMessage({ type: 'GET_NLP_STATUS' }).then((r: any) => {
       setNlpReady(r.success && r.data?.available);
     });
@@ -361,16 +351,35 @@ function MainView({
       if (auth?.isAuthenticated) {
         // Use Supabase RLS for authenticated users
         const r = await sendMessage({ type: 'FETCH_SPACES_SUPABASE' });
-        if (r.success && r.data) {
+        if (r.success && Array.isArray(r.data) && r.data.length > 0) {
           setSpaces(r.data);
-          if (r.data.length === 1) setSelectedSpaceId(r.data[0].id);
+          const configuredSpace = config.autoCaptureSpaceId;
+          if (
+            typeof configuredSpace === 'number' &&
+            r.data.some((space: Space) => space.id === configuredSpace)
+          ) {
+            setSelectedSpaceId(configuredSpace);
+          } else if (r.data.length === 1) {
+            setSelectedSpaceId(r.data[0].id);
+          }
+          return;
         }
-      } else {
-        // Fallback to backend API
-        const r = await sendMessage({ type: 'FETCH_SPACES' });
-        if (r.success && r.data) {
-          setSpaces(r.data);
-          if (r.data.length === 1) setSelectedSpaceId(r.data[0].id);
+        // If direct Supabase read fails or returns empty, fallback to backend API.
+        console.warn('[Misir Popup] Supabase spaces unavailable, falling back to backend', r.error);
+      }
+
+      // Fallback to backend API
+      const r = await sendMessage({ type: 'FETCH_SPACES' });
+      if (r.success && r.data) {
+        setSpaces(r.data);
+        const configuredSpace = config.autoCaptureSpaceId;
+        if (
+          typeof configuredSpace === 'number' &&
+          r.data.some((space: Space) => space.id === configuredSpace)
+        ) {
+          setSelectedSpaceId(configuredSpace);
+        } else if (r.data.length === 1) {
+          setSelectedSpaceId(r.data[0].id);
         }
       }
     };
@@ -384,6 +393,14 @@ function MainView({
     // Scrape current page
     scrapeCurrentPage();
   }, [auth]);
+
+  useEffect(() => {
+    if (!selectedSpaceId) return;
+    sendMessage({
+      type: 'SET_CONFIG',
+      config: { autoCaptureSpaceId: selectedSpaceId },
+    });
+  }, [selectedSpaceId]);
 
   // ── Load subspaces and markers when space selected ──
 
@@ -411,10 +428,22 @@ function MainView({
 
   // ── Scrape ────────────────────────────────────────
 
+  const ensureContentScript = useCallback(async (tabId: number) => {
+    const manifest = chrome.runtime.getManifest();
+    const contentScriptFile = manifest.content_scripts?.[0]?.js?.[0];
+    if (!contentScriptFile) return;
+
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: [contentScriptFile],
+    });
+  }, []);
+
   const scrapeCurrentPage = useCallback(async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab?.id || !tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+      const tabUrl = tab?.url ?? tab?.pendingUrl ?? '';
+      if (!tab?.id || !tabUrl || tabUrl.startsWith('chrome://') || tabUrl.startsWith('chrome-extension://')) {
         return;
       }
 
@@ -422,9 +451,15 @@ function MainView({
       try {
         resp = await chrome.tabs.sendMessage(tab.id, { type: 'SCRAPE_PAGE' });
       } catch (err) {
-        // Content script not ready yet, wait and retry
-        console.warn('[Misir Popup] Content script not ready, retrying...', err);
-        await new Promise((r) => setTimeout(r, 500));
+        // Content script may not be injected yet (site access set to "on click")
+        console.warn('[Misir Popup] Content script not ready, injecting...', err);
+        try {
+          await ensureContentScript(tab.id);
+        } catch (injectErr) {
+          console.error('[Misir Popup] Content script injection failed:', injectErr);
+          throw new Error('Content script not available on this page');
+        }
+        await new Promise((r) => setTimeout(r, 200));
         try {
           resp = await chrome.tabs.sendMessage(tab.id, { type: 'SCRAPE_PAGE' });
         } catch (retryErr) {
@@ -450,7 +485,7 @@ function MainView({
     } catch (err) {
       console.error('[Misir Popup] Scrape failed:', err);
     }
-  }, []);
+  }, [ensureContentScript]);
 
   // ── Capture ───────────────────────────────────────
 
@@ -497,10 +532,10 @@ function MainView({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {/* NLP indicator */}
+          {/* Classifier indicator */}
           <div
             className={`w-2 h-2 rounded-full ${nlpReady ? 'bg-purple-400' : 'bg-yellow-500'}`}
-            title={nlpReady ? 'wink-nlp active' : 'NLP fallback mode'}
+            title={nlpReady ? 'backend classifier active' : 'classifier unavailable'}
           />
           {/* Backend health */}
           <div
@@ -539,7 +574,7 @@ function MainView({
                 <p className="text-xs text-misir-muted truncate">{pageData.page.domain}</p>
               </div>
               <span
-                className={`text-[10px] px-2 py-0.5 rounded-full border font-medium whitespace-nowrap ${ENGAGEMENT_COLORS[classification?.engagementLevel || pageData.engagement]
+                className={`text-[10px] px-2 py-0.5 rounded-full border font-medium whitespace-nowrap ${getEngagementBadgeClass(classification?.engagementLevel || pageData.engagement)
                   }`}
               >
                 {classification?.engagementLevel || pageData.engagement}
@@ -567,7 +602,7 @@ function MainView({
               </div>
             )}
 
-            {/* NLP Keywords */}
+            {/* Classifier Keywords */}
             {classification?.keywords && classification.keywords.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {classification.keywords.slice(0, 6).map((kw) => (
@@ -590,7 +625,7 @@ function MainView({
                 <span>→</span>
                 <span className="text-misir-text">{classification.contentSource}</span>
                 {classification.nlpAvailable && (
-                  <span className="ml-auto" aria-label="NLP classified">
+                  <span className="ml-auto" aria-label="backend classified">
                     <Brain className="w-3 h-3 text-purple-400" />
                   </span>
                 )}
@@ -767,7 +802,7 @@ function MainView({
                   </div>
                 </div>
                 <span
-                  className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${ENGAGEMENT_COLORS[item.engagementLevel]
+                  className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${getEngagementBadgeClass(item.engagementLevel)
                     }`}
                 >
                   {item.engagementLevel}
@@ -784,7 +819,7 @@ function MainView({
 // ── App (Root) ───────────────────────────────────────
 
 export function App() {
-  const [view, setView] = useState<'loading' | 'login' | 'setup' | 'main' | 'settings'>('loading');
+  const [view, setView] = useState<'loading' | 'login' | 'main' | 'settings'>('loading');
   const [config, setConfig] = useState<SensorConfig | null>(null);
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [nlpStatus, setNlpStatus] = useState(false);
@@ -805,11 +840,8 @@ export function App() {
         if (authState?.isAuthenticated) {
           // Authenticated via Supabase — go straight to main
           setView('main');
-        } else if (cfg.userId) {
-          // Has a userId configured (mock auth) — go to main
-          setView('main');
         } else {
-          // No auth, no config — show login
+          // No auth session — show login
           setView('login');
         }
       } else {
@@ -825,7 +857,7 @@ export function App() {
     const resp = await sendMessage({ type: 'SIGN_IN', email, password });
     if (!resp.success) throw new Error(resp.error || 'Sign in failed');
     setAuth(resp.data as AuthState);
-    // Refresh config (userId was updated by auth module)
+    // Refresh config after auth state changes.
     const cfgResp = await sendMessage({ type: 'GET_CONFIG' });
     if (cfgResp.success) setConfig(cfgResp.data);
     setView('main');
@@ -835,19 +867,6 @@ export function App() {
     await sendMessage({ type: 'SIGN_OUT' });
     setAuth(null);
     setView('login');
-  };
-
-  const handleSkipToSetup = () => {
-    setView('setup');
-  };
-
-  const handleConnect = async (partial: Partial<SensorConfig>) => {
-    await sendMessage({ type: 'SET_CONFIG', config: partial });
-    const resp = await sendMessage({ type: 'GET_CONFIG' });
-    if (resp.success) {
-      setConfig(resp.data);
-      setView('main');
-    }
   };
 
   const handleSaveSettings = async (partial: Partial<SensorConfig>) => {
@@ -866,11 +885,7 @@ export function App() {
   }
 
   if (view === 'login') {
-    return <LoginView onLogin={handleLogin} onSkip={handleSkipToSetup} />;
-  }
-
-  if (view === 'setup') {
-    return <SetupView onConnect={handleConnect} />;
+    return <LoginView onLogin={handleLogin} />;
   }
 
   if (view === 'settings' && config) {

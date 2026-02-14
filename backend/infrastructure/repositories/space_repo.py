@@ -179,3 +179,44 @@ class SpaceRepository:
         except Exception as e:
             logger.error(f"Failed to delete space: {e}")
             raise
+
+    async def update(
+        self,
+        space_id: int,
+        user_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> Optional[SpaceResult]:
+        """Update mutable fields of a space and return updated row."""
+        try:
+            data = {}
+            if name is not None:
+                data["name"] = name
+            if description is not None:
+                data["description"] = description
+
+            if not data:
+                return await self.get_by_id(space_id, user_id)
+
+            response = (
+                self._client.schema('misir')
+                .from_('space')
+                .update(data)
+                .eq('id', space_id)
+                .eq('user_id', user_id)
+                .execute()
+            )
+
+            if response.data and len(response.data) > 0:
+                row = response.data[0]
+                return SpaceResult(
+                    id=row['id'],
+                    name=row['name'],
+                    description=row.get('description'),
+                    user_id=row['user_id'],
+                    artifact_count=row.get('artifact_count', 0)
+                )
+            return None
+        except Exception as e:
+            logger.error(f"Failed to update space: {e}")
+            raise

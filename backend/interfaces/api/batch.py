@@ -12,14 +12,19 @@ from typing import List
 from core.limiter import limiter
 from domain.commands import CaptureArtifactCommand
 from application.handlers import CaptureHandler
-from interfaces.api.capture import CaptureRequest, CaptureResponse, get_handler
+from interfaces.api.capture import (
+    CaptureRequest,
+    CaptureResponse,
+    get_current_user,
+    get_handler,
+)
 
 router = APIRouter(tags=["batch"])
 
 
 class BatchCaptureRequest(BaseModel):
     """Batch capture request."""
-    artifacts: List[CaptureRequest] = Field(..., max_items=100, description="List of artifacts to capture")
+    artifacts: List[CaptureRequest] = Field(..., max_length=100, description="List of artifacts to capture")
 
 
 class BatchCaptureResponse(BaseModel):
@@ -34,6 +39,7 @@ class BatchCaptureResponse(BaseModel):
 async def batch_capture(
     request: Request,
     body: BatchCaptureRequest,
+    current_user_id: str = Depends(get_current_user),
     handler: CaptureHandler = Depends(get_handler)
 ):
     """
@@ -68,7 +74,7 @@ async def batch_capture(
 
             # 2. Convert to command
             cmd = CaptureArtifactCommand(
-                user_id=item.user_id,
+                user_id=current_user_id,
                 space_id=item.space_id,
                 url=item.url,
                 embedding=embedding,

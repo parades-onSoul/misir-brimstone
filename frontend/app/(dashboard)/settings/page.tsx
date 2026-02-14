@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { User, Palette, Shield, Zap, Save, Loader2, Check, ExternalLink } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Palette, Shield, Zap, Save, Loader2, Check, ExternalLink } from 'lucide-react';
 import { useAuth } from '@/hooks/use-auth';
 import { useProfile, useUpdateSettings } from '@/lib/api/profile';
 import { Button } from '@/components/ui/button';
@@ -16,48 +16,66 @@ import {
 } from '@/components/ui/select';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import type { UserSettings } from '@/types/api';
+import type { ProfileResponse, UserSettings } from '@/types/api';
 
-export default function SettingsPage() {
-    const { user } = useAuth();
-    const { data: profile, isLoading: profileLoading } = useProfile(user?.id);
+type ThemeOption = 'light' | 'dark' | 'auto';
+type DensityOption = 'comfortable' | 'compact' | 'cozy';
+
+interface EditableSettings {
+    theme: ThemeOption;
+    density: DensityOption;
+    notifications_enabled: boolean;
+    retention_days: number;
+}
+
+const THEME_OPTIONS: readonly ThemeOption[] = ['light', 'dark', 'auto'];
+const DENSITY_OPTIONS: readonly DensityOption[] = ['comfortable', 'compact', 'cozy'];
+
+const asTheme = (value: unknown): ThemeOption =>
+    typeof value === 'string' && THEME_OPTIONS.includes(value as ThemeOption) ? (value as ThemeOption) : 'dark';
+
+const asDensity = (value: unknown): DensityOption =>
+    typeof value === 'string' && DENSITY_OPTIONS.includes(value as DensityOption)
+        ? (value as DensityOption)
+        : 'comfortable';
+
+const asRetentionDays = (value: unknown): number =>
+    typeof value === 'number' && Number.isFinite(value) ? value : 365;
+
+const getEditableSettings = (settings: Record<string, unknown>): EditableSettings => ({
+    theme: asTheme(settings.theme),
+    density: asDensity(settings.density),
+    notifications_enabled:
+        typeof settings.notifications_enabled === 'boolean' ? settings.notifications_enabled : true,
+    retention_days: asRetentionDays(settings.retention_days),
+});
+
+interface SettingsFormProps {
+    profile: ProfileResponse;
+    userId: string;
+}
+
+function SettingsForm({ profile, userId }: SettingsFormProps) {
     const updateSettings = useUpdateSettings();
-
-    // Local state for settings
-    const [theme, setTheme] = useState<'light' | 'dark' | 'auto'>('dark');
-    const [density, setDensity] = useState<'comfortable' | 'compact' | 'cozy'>('comfortable');
-    const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-    const [retentionDays, setRetentionDays] = useState<number>(365);
-    const [hasChanges, setHasChanges] = useState(false);
     const [saveSuccess, setSaveSuccess] = useState(false);
 
-    // Load settings from profile
-    useEffect(() => {
-        if (profile?.settings) {
-            const settings = profile.settings as UserSettings;
-            if (settings.theme) setTheme(settings.theme);
-            if (settings.density) setDensity(settings.density);
-            if (settings.notifications_enabled !== undefined) setNotificationsEnabled(settings.notifications_enabled);
-            if (settings.retention_days) setRetentionDays(settings.retention_days);
-        }
-    }, [profile]);
+    const baseSettings = useMemo(
+        () => getEditableSettings(profile.settings as Record<string, unknown>),
+        [profile.settings]
+    );
 
-    // Track changes
-    useEffect(() => {
-        if (profile?.settings) {
-            const settings = profile.settings as UserSettings;
-            const changed =
-                theme !== (settings.theme || 'dark') ||
-                density !== (settings.density || 'comfortable') ||
-                notificationsEnabled !== (settings.notifications_enabled ?? true) ||
-                retentionDays !== (settings.retention_days || 365);
-            setHasChanges(changed);
-        }
-    }, [theme, density, notificationsEnabled, retentionDays, profile]);
+    const [theme, setTheme] = useState<ThemeOption>(baseSettings.theme);
+    const [density, setDensity] = useState<DensityOption>(baseSettings.density);
+    const [notificationsEnabled, setNotificationsEnabled] = useState(baseSettings.notifications_enabled);
+    const [retentionDays, setRetentionDays] = useState(baseSettings.retention_days);
+
+    const hasChanges =
+        theme !== baseSettings.theme ||
+        density !== baseSettings.density ||
+        notificationsEnabled !== baseSettings.notifications_enabled ||
+        retentionDays !== baseSettings.retention_days;
 
     const handleSave = async () => {
-        if (!user?.id) return;
-
         setSaveSuccess(false);
         const newSettings: UserSettings = {
             theme,
@@ -68,10 +86,9 @@ export default function SettingsPage() {
 
         try {
             await updateSettings.mutateAsync({
-                userId: user.id,
+                userId,
                 settings: newSettings,
             });
-            setHasChanges(false);
             setSaveSuccess(true);
             setTimeout(() => setSaveSuccess(false), 3000);
         } catch (error) {
@@ -79,24 +96,14 @@ export default function SettingsPage() {
         }
     };
 
-    if (profileLoading) {
-        return (
-            <div className="min-h-full w-full bg-[#0B0C0E] text-[#EEEEF0] flex items-center justify-center">
-                <Loader2 className="size-8 animate-spin text-[#5E6AD2]" />
-            </div>
-        );
-    }
-
     return (
         <div className="min-h-full w-full bg-[#0B0C0E] text-[#EEEEF0]">
             <div className="max-w-4xl mx-auto p-6 space-y-6">
-                {/* Header */}
                 <div className="mb-6">
                     <h1 className="text-2xl font-semibold text-[#EEEEF0]">Settings</h1>
                     <p className="text-[14px] text-[#8A8F98] mt-1">Customize your Misir experience</p>
                 </div>
 
-                {/* Save Button (Sticky) */}
                 {hasChanges && (
                     <div className="sticky top-0 z-10 bg-[#0B0C0E]/95 backdrop-blur-sm border-b border-white/5 -mx-6 px-6 py-3 mb-4">
                         <div className="flex items-center justify-between">
@@ -127,7 +134,6 @@ export default function SettingsPage() {
                     </div>
                 )}
 
-                {/* Appearance Settings (Job 39) */}
                 <Card className="bg-[#141517] border-white/5">
                     <CardHeader>
                         <div className="flex items-center gap-2">
@@ -139,12 +145,11 @@ export default function SettingsPage() {
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-6">
-                        {/* Theme */}
                         <div className="space-y-2">
                             <Label htmlFor="theme" className="text-[14px] text-[#EEEEF0]">
                                 Theme
                             </Label>
-                            <Select value={theme} onValueChange={(value: any) => setTheme(value)}>
+                            <Select value={theme} onValueChange={(value) => setTheme(asTheme(value))}>
                                 <SelectTrigger id="theme" className="bg-[#0B0C0E] border-white/10">
                                     <SelectValue />
                                 </SelectTrigger>
@@ -161,12 +166,11 @@ export default function SettingsPage() {
 
                         <Separator className="bg-white/5" />
 
-                        {/* Density */}
                         <div className="space-y-2">
                             <Label htmlFor="density" className="text-[14px] text-[#EEEEF0]">
                                 Interface Density
                             </Label>
-                            <Select value={density} onValueChange={(value: any) => setDensity(value)}>
+                            <Select value={density} onValueChange={(value) => setDensity(asDensity(value))}>
                                 <SelectTrigger id="density" className="bg-[#0B0C0E] border-white/10">
                                     <SelectValue />
                                 </SelectTrigger>
@@ -183,7 +187,6 @@ export default function SettingsPage() {
                     </CardContent>
                 </Card>
 
-                {/* Privacy & Data (Job 40) */}
                 <Card className="bg-[#141517] border-white/5">
                     <CardHeader>
                         <div className="flex items-center gap-2">
@@ -195,7 +198,6 @@ export default function SettingsPage() {
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-6">
-                        {/* Notifications */}
                         <div className="flex items-center justify-between">
                             <div className="space-y-1">
                                 <Label htmlFor="notifications" className="text-[14px] text-[#EEEEF0]">
@@ -214,14 +216,13 @@ export default function SettingsPage() {
 
                         <Separator className="bg-white/5" />
 
-                        {/* Retention Policy */}
                         <div className="space-y-2">
                             <Label htmlFor="retention" className="text-[14px] text-[#EEEEF0]">
                                 Data Retention Period
                             </Label>
                             <Select
                                 value={retentionDays.toString()}
-                                onValueChange={(value) => setRetentionDays(parseInt(value))}
+                                onValueChange={(value) => setRetentionDays(Number.parseInt(value, 10))}
                             >
                                 <SelectTrigger id="retention" className="bg-[#0B0C0E] border-white/10">
                                     <SelectValue />
@@ -241,7 +242,6 @@ export default function SettingsPage() {
 
                         <Separator className="bg-white/5" />
 
-                        {/* Export Data */}
                         <div className="space-y-2">
                             <Label className="text-[14px] text-[#EEEEF0]">Export Your Data</Label>
                             <p className="text-[12px] text-[#5F646D] mb-3">
@@ -260,7 +260,6 @@ export default function SettingsPage() {
                     </CardContent>
                 </Card>
 
-                {/* Advanced Settings (Job 41) */}
                 <Card className="bg-[#141517] border-white/5">
                     <CardHeader>
                         <div className="flex items-center gap-2">
@@ -272,7 +271,6 @@ export default function SettingsPage() {
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-6">
-                        {/* How Misir Works */}
                         <div className="space-y-2">
                             <Label className="text-[14px] text-[#EEEEF0]">How Misir Works</Label>
                             <p className="text-[12px] text-[#5F646D] mb-3">
@@ -281,7 +279,9 @@ export default function SettingsPage() {
                             <Button
                                 variant="outline"
                                 className="text-[13px]"
-                                onClick={() => window.open('https://github.com/misir-ai/misir/blob/main/docs/algorithms.md', '_blank')}
+                                onClick={() =>
+                                    window.open('https://github.com/misir-ai/misir/blob/main/docs/algorithms.md', '_blank')
+                                }
                             >
                                 <ExternalLink className="mr-2 size-3" />
                                 View Algorithm Documentation
@@ -290,7 +290,6 @@ export default function SettingsPage() {
 
                         <Separator className="bg-white/5" />
 
-                        {/* Model Configuration */}
                         <div className="space-y-3">
                             <Label className="text-[14px] text-[#EEEEF0]">Model Configuration</Label>
                             <div className="grid grid-cols-2 gap-3">
@@ -318,20 +317,19 @@ export default function SettingsPage() {
 
                         <Separator className="bg-white/5" />
 
-                        {/* Diagnostics */}
                         <div className="space-y-3">
                             <Label className="text-[14px] text-[#EEEEF0]">System Diagnostics</Label>
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="p-3 bg-[#0B0C0E] border border-white/5 rounded">
                                     <div className="text-[11px] text-[#5F646D] mb-1">Account Created</div>
                                     <div className="text-[13px] text-[#EEEEF0]">
-                                        {profile?.created_at ? new Date(profile.created_at).toLocaleDateString() : '—'}
+                                        {profile.created_at ? new Date(profile.created_at).toLocaleDateString() : '-'}
                                     </div>
                                 </div>
                                 <div className="p-3 bg-[#0B0C0E] border border-white/5 rounded">
                                     <div className="text-[11px] text-[#5F646D] mb-1">Onboarding Status</div>
                                     <div className="text-[13px] text-[#EEEEF0]">
-                                        {profile?.onboarding_completed ? '✅ Complete' : '⚠️ Incomplete'}
+                                        {profile.onboarding_completed ? 'Complete' : 'Incomplete'}
                                     </div>
                                 </div>
                             </div>
@@ -339,7 +337,6 @@ export default function SettingsPage() {
                     </CardContent>
                 </Card>
 
-                {/* Danger Zone */}
                 <Card className="bg-red-500/5 border-red-500/20">
                     <CardHeader>
                         <CardTitle className="text-[16px] font-medium text-red-400">Danger Zone</CardTitle>
@@ -362,5 +359,34 @@ export default function SettingsPage() {
                 </Card>
             </div>
         </div>
+    );
+}
+
+export default function SettingsPage() {
+    const { user } = useAuth();
+    const { data: profile, isLoading: profileLoading } = useProfile(user?.id);
+
+    if (profileLoading) {
+        return (
+            <div className="min-h-full w-full bg-[#0B0C0E] text-[#EEEEF0] flex items-center justify-center">
+                <Loader2 className="size-8 animate-spin text-[#5E6AD2]" />
+            </div>
+        );
+    }
+
+    if (!user?.id || !profile) {
+        return (
+            <div className="min-h-full w-full bg-[#0B0C0E] text-[#EEEEF0] flex items-center justify-center">
+                <p className="text-sm text-[#8A8F98]">Unable to load settings.</p>
+            </div>
+        );
+    }
+
+    return (
+        <SettingsForm
+            key={`${profile.id}:${profile.updated_at}`}
+            profile={profile}
+            userId={user.id}
+        />
     );
 }

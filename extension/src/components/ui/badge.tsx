@@ -12,9 +12,10 @@ const badgeVariants = cva(
         warning: 'border-amber-500/30 bg-amber-500/20 text-amber-400',
         destructive: 'border-red-500/30 bg-red-500/20 text-red-400',
         outline: 'text-misir-text',
-        ambient: 'border-blue-500/30 bg-blue-500/20 text-blue-400',
+        latent: 'border-blue-500/30 bg-blue-500/20 text-blue-400',
+        discovered: 'border-cyan-500/30 bg-cyan-500/20 text-cyan-400',
         engaged: 'border-amber-500/30 bg-amber-500/20 text-amber-400',
-        committed: 'border-emerald-500/30 bg-emerald-500/20 text-emerald-400',
+        saturated: 'border-emerald-500/30 bg-emerald-500/20 text-emerald-400',
       },
     },
     defaultVariants: {

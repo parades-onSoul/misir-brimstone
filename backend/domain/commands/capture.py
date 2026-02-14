@@ -32,7 +32,7 @@ class CaptureArtifactCommand:
     dwell_time_ms: int
     word_count: int
     engagement_level: str  # latent | discovered | engaged | saturated
-    content_source: str    # web | pdf | video | ebook | other
+    content_source: str    # web | pdf | video | chat | note | other
     
     # Optional
     subspace_id: Optional[int] = None

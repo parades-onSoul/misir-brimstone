@@ -3,6 +3,10 @@
 import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api/client';
 import { useAuth } from '@/hooks/use-auth';
+import {
+    FOCUS_CONFIDENCE_HIGH_THRESHOLD,
+    FOCUS_CONFIDENCE_MEDIUM_THRESHOLD,
+} from '@/lib/focus-thresholds';
 import { ActivityHeatmap } from '@/components/dashboard/activity-heatmap';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -33,7 +37,7 @@ export default function AnalyticsPage() {
         queryKey: ['analytics', 'global', user?.id],
         queryFn: () => {
             if (!user?.id) throw new Error("User not authenticated");
-            return api.analytics.global(user.id);
+            return api.analytics.global();
         },
         enabled: !!user?.id,
     });
@@ -80,7 +84,11 @@ export default function AnalyticsPage() {
                         value={`${Math.round(overview.overall_focus * 100)}%`} 
                         icon={TrendingUp}
                         // Helper to show color based on score
-                        color={overview.overall_focus > 0.7 ? "text-green-400" : (overview.overall_focus < 0.4 ? "text-red-400" : "text-amber-400")}
+                        color={
+                            overview.overall_focus > FOCUS_CONFIDENCE_HIGH_THRESHOLD
+                                ? "text-green-400"
+                                : (overview.overall_focus < FOCUS_CONFIDENCE_MEDIUM_THRESHOLD ? "text-red-400" : "text-amber-400")
+                        }
                     />
                     <OverviewCard 
                         title="System Health" 

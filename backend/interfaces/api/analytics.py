@@ -7,12 +7,12 @@ Endpoint:
 - GET /spaces/{space_id}/analytics/velocity
 - GET /spaces/{space_id}/analytics/confidence
 """
-from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from supabase import create_client, Client
 from core.config import get_settings
@@ -28,6 +28,21 @@ from infrastructure.repositories.artifact_repo import ArtifactRepository
 from domain.entities.analytics import SubspaceVelocity, SubspaceDrift, SubspaceConfidence
 
 router = APIRouter(prefix="", tags=["analytics"])
+
+
+def _parse_iso_timestamp(value: object) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value
+    if not value:
+        return None
+    try:
+        text = str(value).replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    except Exception:
+        return None
 
 class DomainStat(BaseModel):
     domain: str
@@ -126,6 +141,31 @@ def get_supabase_client() -> Client:
     settings = get_settings()
     return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY or settings.SUPABASE_KEY)
 
+def get_current_user(
+    authorization: str = Header(None),
+    client: Client = Depends(get_supabase_client)
+) -> str:
+    """
+    Extract user_id from JWT token and validate with Supabase.
+    """
+    try:
+        if not authorization:
+            raise HTTPException(status_code=401, detail="Authorization header required")
+
+        if not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Invalid authorization format")
+
+        token = authorization.split(" ")[1]
+        user = client.auth.get_user(token)
+        if not user or not user.user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        return user.user.id
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {e}")
+
 # Create a new router for global analytics
 global_router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -133,7 +173,7 @@ global_router = APIRouter(prefix="/analytics", tags=["analytics"])
 @limiter.limit("10/minute")
 async def get_global_analytics(
     request: Request,
-    user_id: str = Query(..., description="User ID"),
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client),
 ):
     """
@@ -142,19 +182,70 @@ async def get_global_analytics(
     artifact_repo = ArtifactRepository(client)
     
     # 1. Overview Metrics
-    all_artifacts = await artifact_repo.get_all_by_user_id(user_id)
-    spaces_res = client.schema("misir").from_("space").select("id, name, description").eq("user_id", user_id).execute()
+    all_artifacts = await artifact_repo.get_all_by_user_id(current_user_id)
+    spaces_res = client.schema("misir").from_("space").select("id, name, description").eq("user_id", current_user_id).execute()
     spaces = spaces_res.data or []
-    
+
     total_artifacts = len(all_artifacts)
-    
+
+    def parse_dt(value):
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value
+        try:
+            # Handle "Z" suffix and timezone-aware strings
+            if isinstance(value, str) and value.endswith("Z"):
+                value = value.replace("Z", "+00:00")
+            return datetime.fromisoformat(value)
+        except Exception:
+            return None
+
+    def minutes_for_artifact(artifact: dict) -> float:
+        # Prefer explicit reading_time_min, then dwell_time_ms, then estimate via word_count
+        reading_time = artifact.get("reading_time_min")
+        if isinstance(reading_time, (int, float)) and reading_time > 0:
+            return float(reading_time)
+
+        dwell_ms = artifact.get("dwell_time_ms")
+        if isinstance(dwell_ms, (int, float)) and dwell_ms > 0:
+            return float(dwell_ms) / 60000.0
+
+        word_count = artifact.get("word_count")
+        if isinstance(word_count, (int, float)) and word_count > 0:
+            return float(word_count) / 200.0  # 200 wpm baseline
+
+        return 0.0
+
     # Compute artifact_count per space
     space_counts = Counter(a.get('space_id') for a in all_artifacts if a.get('space_id'))
-    active_spaces = len([s for s in spaces if space_counts.get(s['id'], 0) > 5])
-    
-    # Dummy focus & health for now
-    overall_focus = 0.78 
-    system_health = "healthy"
+    active_spaces = len([s for s in spaces if space_counts.get(s['id'], 0) >= 3])
+
+    # Compute overall focus from engagement levels
+    engagement_weights = {
+        "latent": 0.25,
+        "discovered": 0.5,
+        "engaged": 0.75,
+        "saturated": 1.0,
+    }
+    if total_artifacts > 0:
+        weighted_sum = 0.0
+        for a in all_artifacts:
+            level = a.get("engagement_level", "latent")
+            weighted_sum += engagement_weights.get(level, 0.25)
+        overall_focus = max(0.0, min(1.0, weighted_sum / total_artifacts))
+    else:
+        overall_focus = 0.0
+
+    # System health heuristic
+    if total_artifacts == 0:
+        system_health = "new"
+    elif overall_focus >= 0.7 and active_spaces >= 1:
+        system_health = "healthy"
+    elif overall_focus >= 0.45:
+        system_health = "stable"
+    else:
+        system_health = "at_risk"
 
     overview = OverviewMetrics(
         total_artifacts=total_artifacts,
@@ -163,27 +254,45 @@ async def get_global_analytics(
         system_health=system_health,
     )
 
-    # 2. Time Allocation (Dummy Data)
+    # 2. Time Allocation (Computed from artifacts)
+    space_minutes = {s["id"]: 0.0 for s in spaces}
+    for a in all_artifacts:
+        space_id = a.get("space_id")
+        if space_id in space_minutes:
+            space_minutes[space_id] += minutes_for_artifact(a)
+
+    # Use frontend palette order for consistency
+    palette = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899", "#06B6D4", "#F97316"]
     time_allocation = [
-        TimeAllocationItem(space_id=s['id'], space_name=s['name'], space_color="#3B82F6", minutes=s.get('artifact_count', 0) * 5, percentage=0)
-        for s in spaces
+        TimeAllocationItem(
+            space_id=s['id'],
+            space_name=s['name'],
+            space_color=palette[idx % len(palette)],
+            minutes=int(round(space_minutes.get(s['id'], 0.0))),
+            percentage=0
+        )
+        for idx, s in enumerate(spaces)
     ]
     total_minutes = sum(item.minutes for item in time_allocation)
     if total_minutes > 0:
         for item in time_allocation:
             item.percentage = round((item.minutes / total_minutes) * 100, 1)
 
-    # 3. Activity Heatmap (Dummy Data)
+    # 3. Activity Heatmap (Last 90 days, computed)
     activity_heatmap = []
-    today = datetime.utcnow()
+    today = datetime.now(timezone.utc).date()
     for i in range(90):
-        date = today - timedelta(days=i)
-        count = len([a for a in all_artifacts if a.created_at.date() == date.date()])
+        target = today - timedelta(days=i)
+        count = 0
+        for a in all_artifacts:
+            created = parse_dt(a.get("created_at"))
+            if created and created.date() == target:
+                count += 1
         if count > 0:
-            activity_heatmap.append(HeatmapItem(date=date.strftime("%Y-%m-%d"), count=count))
+            activity_heatmap.append(HeatmapItem(date=target.strftime("%Y-%m-%d"), count=count))
 
     # 4. Weak Items
-    weak_items_data = await artifact_repo.get_weak_artifacts_for_user(user_id, limit=5)
+    weak_items_data = await artifact_repo.get_weak_artifacts_for_user(current_user_id, limit=5)
     weak_items = [
         WeaknessItem(
             id=item['id'],
@@ -194,11 +303,35 @@ async def get_global_analytics(
         ) for item in weak_items_data
     ]
 
-    # 5. Pace by Space (Dummy Data)
-    pace_by_space = [
-        PaceItem(space_name=s['name'], count=s.get('artifact_count', 0), trend="flat")
-        for s in spaces
-    ]
+    # 5. Pace by Space (Last 7 days + trend vs previous 7)
+    now = datetime.now(timezone.utc)
+    last_7_start = now - timedelta(days=7)
+    prev_7_start = now - timedelta(days=14)
+
+    pace_by_space = []
+    for s in spaces:
+        sid = s["id"]
+        last_7 = 0
+        prev_7 = 0
+        for a in all_artifacts:
+            if a.get("space_id") != sid:
+                continue
+            created = parse_dt(a.get("created_at"))
+            if not created:
+                continue
+            if created >= last_7_start:
+                last_7 += 1
+            elif created >= prev_7_start:
+                prev_7 += 1
+
+        if last_7 > prev_7:
+            trend = "up"
+        elif last_7 < prev_7:
+            trend = "down"
+        else:
+            trend = "flat"
+
+        pace_by_space.append(PaceItem(space_name=s["name"], count=last_7, trend=trend))
 
     return GlobalAnalyticsResult(
         overview=overview,
@@ -214,7 +347,7 @@ async def get_global_analytics(
 async def get_space_analytics(
     request: Request,
     space_id: int = Path(..., description="Space ID"),
-    user_id: str = Query(..., description="User ID"),
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client),
 ):
     """
@@ -250,22 +383,41 @@ async def get_space_analytics(
         for k, v in dom_counts.most_common(5)
     ]
     
-    # Activity Level (Simple heuristic: count recent artifacts)
-    # Logic: > 5 in last week = High, > 0 = Medium, 0 = Low
+    # Activity Level (recent behavior first, then total-volume fallback)
+    # Logic:
+    # - High: >= 5 artifacts in last 7 days
+    # - Medium: 1-4 artifacts in last 7 days
+    # - Low: 0 artifacts in last 7 days
     recent_count = 0
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     one_week_ago = now - timedelta(days=7)
-    
+
     for a in artifacts:
-        # created_at might be string, need parsing if we want real precision
-        # For v1, let's just use total count as proxy if parsing fails
-        # But we can try detailed parsing if string format allows
-        pass 
-    
+        created_raw = a.get("created_at")
+        if not created_raw:
+            continue
+        try:
+            if isinstance(created_raw, datetime):
+                created_at = created_raw
+            else:
+                created_text = str(created_raw).replace("Z", "+00:00")
+                created_at = datetime.fromisoformat(created_text)
+
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+
+            if created_at >= one_week_ago:
+                recent_count += 1
+        except Exception:
+            continue
+
     activity = "Low"
-    if total > 50:
+    if recent_count >= 5:
         activity = "High"
-    elif total > 10:
+    elif recent_count > 0:
+        activity = "Medium"
+    elif total > 50:
+        # Fallback for legacy datasets with missing timestamps.
         activity = "Medium"
         
     return AnalyticsResponse(
@@ -281,7 +433,7 @@ async def get_space_analytics(
 async def get_space_topology(
     request: Request,
     space_id: int = Path(..., description="Space ID"),
-    user_id: str = Query(..., description="User ID"),
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client),
 ):
     """
@@ -293,7 +445,7 @@ async def get_space_topology(
     handler = TopologyHandler(repo)
     
     # Get topology
-    result = await handler.get_topology(space_id, user_id)
+    result = await handler.get_topology(space_id, current_user_id)
     
     return TopologyResponse(nodes=result.get("nodes", []))
 
@@ -302,32 +454,45 @@ async def get_space_topology(
 async def get_space_drift(
     request: Request,
     space_id: int = Path(..., description="Space ID"),
-    user_id: str = Query(..., description="User ID"),
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client),
 ):
     """Get drift history for all subspaces in the space."""
     repo = SubspaceRepository(client)
     
-    # 1. Get all subspaces in space
-    subspaces = await repo.get_by_space(space_id, user_id)
-    if not subspaces.is_ok():
+    subspaces_result = await repo.get_by_space(space_id, current_user_id)
+    if not subspaces_result.is_ok():
         return []
-    
-    # 2. Get history for each (TODO: Optimize to bulk query)
-    events = []
-    for sub in subspaces.value:
-        history = await repo.get_drift_history(sub.id)
-        for h in history:
-            events.append(DriftEvent(
-                id=h.id,
-                subspace_id=sub.id,
-                subspace_name=sub.name,
-                drift_magnitude=h.drift_magnitude,
-                occurred_at=h.occurred_at,
-                trigger_signal_id=h.trigger_signal_id
-            ))
-            
-    # Sort by date desc
+
+    subspaces = subspaces_result.ok_value
+    if not subspaces:
+        return []
+
+    subspace_name_map = {sub.id: sub.name for sub in subspaces}
+    subspace_ids = list(subspace_name_map.keys())
+
+    history_rows = (
+        client.schema("misir")
+        .from_("subspace_drift")
+        .select("id, subspace_id, drift_magnitude, occurred_at, trigger_signal_id")
+        .in_("subspace_id", subspace_ids)
+        .order("occurred_at", desc=True)
+        .limit(500)
+        .execute()
+    ).data or []
+
+    events = [
+        DriftEvent(
+            id=row.get("id"),
+            subspace_id=row["subspace_id"],
+            subspace_name=subspace_name_map.get(row["subspace_id"], f"Subspace {row['subspace_id']}"),
+            drift_magnitude=row["drift_magnitude"],
+            occurred_at=row["occurred_at"],
+            trigger_signal_id=row.get("trigger_signal_id"),
+        )
+        for row in history_rows
+    ]
+
     events.sort(key=lambda x: x.occurred_at, reverse=True)
     return events
 
@@ -336,28 +501,84 @@ async def get_space_drift(
 async def get_space_velocity(
     request: Request,
     space_id: int = Path(..., description="Space ID"),
-    user_id: str = Query(..., description="User ID"),
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client),
 ):
     """Get velocity history for all subspaces in the space."""
     repo = SubspaceRepository(client)
     
-    # 1. Get all subspaces
-    subspaces = await repo.get_by_space(space_id, user_id)
-    if not subspaces.is_ok():
+    subspaces_result = await repo.get_by_space(space_id, current_user_id)
+    if not subspaces_result.is_ok():
         return []
-        
-    points = []
-    for sub in subspaces.value:
-        history = await repo.get_velocity_history(sub.id)
-        for h in history:
-            points.append(VelocityPoint(
-                subspace_id=sub.id,
-                subspace_name=sub.name,
-                velocity=h.velocity,
-                measured_at=h.measured_at
-            ))
-            
+
+    subspaces = subspaces_result.ok_value
+    if not subspaces:
+        return []
+
+    subspace_name_map = {sub.id: sub.name for sub in subspaces}
+    subspace_ids = list(subspace_name_map.keys())
+
+    history_rows = (
+        client.schema("misir")
+        .from_("subspace_velocity")
+        .select("subspace_id, velocity, measured_at")
+        .in_("subspace_id", subspace_ids)
+        .order("measured_at", desc=True)
+        .limit(500)
+        .execute()
+    ).data or []
+
+    points = [
+        VelocityPoint(
+            subspace_id=row["subspace_id"],
+            subspace_name=subspace_name_map.get(row["subspace_id"], f"Subspace {row['subspace_id']}"),
+            velocity=row["velocity"],
+            measured_at=row["measured_at"],
+        )
+        for row in history_rows
+    ]
+
+    # Fallback for environments where velocity logging is not yet enabled:
+    # derive daily pace from signal creation counts.
+    if not points:
+        signal_rows = (
+            client.schema("misir")
+            .from_("signal")
+            .select("subspace_id,created_at")
+            .eq("user_id", current_user_id)
+            .eq("space_id", space_id)
+            .in_("subspace_id", subspace_ids)
+            .is_("deleted_at", "null")
+            .order("created_at", desc=True)
+            .limit(2000)
+            .execute()
+        ).data or []
+
+        pace_buckets: dict[tuple[int, str], int] = {}
+        for row in signal_rows:
+            subspace_id = row.get("subspace_id")
+            if not isinstance(subspace_id, int):
+                continue
+            parsed = _parse_iso_timestamp(row.get("created_at"))
+            if parsed is None:
+                continue
+            day_key = parsed.date().isoformat()
+            key = (subspace_id, day_key)
+            pace_buckets[key] = pace_buckets.get(key, 0) + 1
+
+        for (subspace_id, day_key), count in pace_buckets.items():
+            measured_at = _parse_iso_timestamp(f"{day_key}T00:00:00+00:00")
+            if measured_at is None:
+                continue
+            points.append(
+                VelocityPoint(
+                    subspace_id=subspace_id,
+                    subspace_name=subspace_name_map.get(subspace_id, f"Subspace {subspace_id}"),
+                    velocity=float(count),
+                    measured_at=measured_at,
+                )
+            )
+
     points.sort(key=lambda x: x.measured_at, reverse=True)
     return points
 
@@ -366,27 +587,62 @@ async def get_space_velocity(
 async def get_space_confidence(
     request: Request,
     space_id: int = Path(..., description="Space ID"),
-    user_id: str = Query(..., description="User ID"),
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client),
 ):
     """Get confidence history for all subspaces in the space."""
     repo = SubspaceRepository(client)
     
-    subspaces = await repo.get_by_space(space_id, user_id)
-    if not subspaces.is_ok():
+    subspaces_result = await repo.get_by_space(space_id, current_user_id)
+    if not subspaces_result.is_ok():
         return []
-        
-    points = []
-    for sub in subspaces.value:
-        history = await repo.get_confidence_history(sub.id)
-        for h in history:
-            points.append(ConfidencePoint(
-                subspace_id=sub.id,
-                subspace_name=sub.name,
-                confidence=h.confidence,
-                computed_at=h.computed_at
-            ))
-            
+
+    subspaces = subspaces_result.ok_value
+    if not subspaces:
+        return []
+
+    subspace_name_map = {sub.id: sub.name for sub in subspaces}
+    subspace_ids = list(subspace_name_map.keys())
+
+    history_rows = (
+        client.schema("misir")
+        .from_("subspace_centroid_history")
+        .select("subspace_id, confidence, computed_at")
+        .in_("subspace_id", subspace_ids)
+        .order("computed_at", desc=True)
+        .limit(500)
+        .execute()
+    ).data or []
+
+    points = [
+        ConfidencePoint(
+            subspace_id=row["subspace_id"],
+            subspace_name=subspace_name_map.get(row["subspace_id"], f"Subspace {row['subspace_id']}"),
+            confidence=row["confidence"],
+            computed_at=row["computed_at"],
+        )
+        for row in history_rows
+    ]
+
+    # Fallback for fresh spaces with no centroid history rows yet.
+    if not points:
+        for subspace in subspaces:
+            timestamp = (
+                _parse_iso_timestamp(subspace.centroid_updated_at)
+                or _parse_iso_timestamp(subspace.updated_at)
+                or _parse_iso_timestamp(subspace.created_at)
+            )
+            if timestamp is None:
+                continue
+            points.append(
+                ConfidencePoint(
+                    subspace_id=subspace.id,
+                    subspace_name=subspace.name,
+                    confidence=float(subspace.confidence or 0.0),
+                    computed_at=timestamp,
+                )
+            )
+
     points.sort(key=lambda x: x.computed_at, reverse=True)
     return points
 
@@ -395,7 +651,7 @@ async def get_space_confidence(
 async def get_margin_distribution(
     request: Request,
     space_id: int = Path(..., description="Space ID"),
-    user_id: str = Query(..., description="User ID"),
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client),
 ):
     """Get margin score distribution for the space."""
@@ -411,7 +667,7 @@ async def get_margin_distribution(
     # Actually, let's just use the repo's logic directly if it's more precise, 
     # OR map: Ambiguous+Low -> Weak, Medium -> Moderate, High -> Strong.
     
-    result = await repo.get_margin_distribution(space_id, user_id)
+    result = await repo.get_margin_distribution(space_id, current_user_id)
     cats = result.get('categories', {})
     
     # Mapping to JTD Spec (Week, Moderate, Strong)
@@ -435,7 +691,7 @@ async def get_margin_distribution(
 async def get_space_alerts(
     request: Request,
     space_id: int = Path(..., description="Space ID"),
-    user_id: str = Query(..., description="User ID"),
+    current_user_id: str = Depends(get_current_user),
     client: Client = Depends(get_supabase_client),
 ):
     """
@@ -453,7 +709,19 @@ async def get_space_alerts(
     
     recent_artifacts = response.data or []
     if recent_artifacts:
-        margins = [a.get("signal", {}).get("margin") for a in recent_artifacts if a.get("signal") and a.get("signal", {}).get("margin") is not None]
+        margins = []
+        for artifact in recent_artifacts:
+            signal_data = artifact.get("signal")
+            if isinstance(signal_data, dict):
+                margin = signal_data.get("margin")
+                if isinstance(margin, (int, float)):
+                    margins.append(margin)
+            elif isinstance(signal_data, list):
+                for signal_item in signal_data:
+                    if isinstance(signal_item, dict):
+                        margin = signal_item.get("margin")
+                        if isinstance(margin, (int, float)):
+                            margins.append(margin)
         if margins:
             avg_margin = sum(margins) / len(margins)
             if avg_margin < 0.3:
@@ -467,10 +735,10 @@ async def get_space_alerts(
     
     # For Drift/Velocity/Confidence, we need to check sub-spaces
     repo = SubspaceRepository(client)
-    subspaces_result = await repo.get_by_space(space_id, user_id)
+    subspaces_result = await repo.get_by_space(space_id, current_user_id)
     
     if subspaces_result.is_ok():
-        subspaces = subspaces_result.value
+        subspaces = subspaces_result.ok_value
         for sub in subspaces:
             # 2. High Drift (Drift > 0.3 in last update)
             drift_hist = await repo.get_drift_history(sub.id)

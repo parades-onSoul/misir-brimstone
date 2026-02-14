@@ -234,4 +234,4 @@ For detailed table schemas and complete SQL definitions, see the versioned migra
 
 ---
 
-📖 **Related Documentation**: [API Reference](../api/README.md) | [Architecture Overview](../architecture/system-overview.md) | [Getting Started](../getting-started.md)
+📖 **Related Documentation**: [Canonical Full Project Doc](../../Tomal Docs/Misir_Full_Project_Documentation_2026-02-14.md) | [Architecture Overview](../architecture/system-overview.md)

@@ -44,7 +44,7 @@ export function useProfile(userId?: string): UseQueryResult<ProfileResponse, Err
 export function useUpdateSettings(): UseMutationResult<
     ProfileResponse,
     Error,
-    { userId: string; settings: Record<string, any> }
+    { userId: string; settings: Record<string, unknown> }
 > {
     const queryClient = useQueryClient();
 

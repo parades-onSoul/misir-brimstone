@@ -33,12 +33,15 @@ body {
 }
 
 /* Engagement badges */
-.badge-ambient {
+.badge-latent {
   @apply bg-blue-500/20 text-blue-400 border-blue-500/30;
+}
+.badge-discovered {
+  @apply bg-cyan-500/20 text-cyan-400 border-cyan-500/30;
 }
 .badge-engaged {
   @apply bg-amber-500/20 text-amber-400 border-amber-500/30;
 }
-.badge-committed {
+.badge-saturated {
   @apply bg-emerald-500/20 text-emerald-400 border-emerald-500/30;
 }

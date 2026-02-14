@@ -2,17 +2,17 @@
  * Misir Sensor — Core Type Definitions
  * 
  * Aligned with backend DB enums:
- *   engagement_level: ambient | engaged | committed
- *   content_source:   web | ai | video | document | note
+ *   engagement_level: latent | discovered | engaged | saturated
+ *   content_source:   web | pdf | video | chat | note | other
  */
 
 // ── Enums (match DB schema exactly) ──────────────────
 
-/** Engagement level — semantic ordering: ambient < engaged < committed */
-export type EngagementLevel = 'ambient' | 'engaged' | 'committed';
+/** Engagement level — semantic ordering: latent < discovered < engaged < saturated */
+export type EngagementLevel = 'latent' | 'discovered' | 'engaged' | 'saturated';
 
 /** Content source — how the content was found */
-export type ContentSource = 'web' | 'ai' | 'video' | 'document' | 'note';
+export type ContentSource = 'web' | 'pdf' | 'video' | 'chat' | 'note' | 'other';
 
 /** How the capture was triggered */
 export type CaptureMethod = 'auto' | 'manual';
@@ -52,7 +52,7 @@ export interface ReadingMetrics {
 
 // ── NLP Analysis ─────────────────────────────────────
 
-/** Result from wink-nlp analysis */
+/** Token/structure analysis metadata from classifier pipeline */
 export interface NLPResult {
   keywords: string[];
   entities: string[];
@@ -142,18 +142,24 @@ export interface Marker {
 
 export interface SensorConfig {
   apiUrl: string;
-  userId: string;
+  userId?: string;
   enabled: boolean;
   minWordCount: number;
   minDwellTimeMs: number;
+  autoCaptureEnabled: boolean;
+  autoCaptureConfidenceThreshold: number;
+  autoCaptureCooldownMs: number;
+  autoCaptureSpaceId?: number;
 }
 
 export const DEFAULT_CONFIG: SensorConfig = {
   apiUrl: 'http://localhost:8000/api/v1',
-  userId: 'test-user-123',
   enabled: true,
   minWordCount: 50,
   minDwellTimeMs: 3000,
+  autoCaptureEnabled: false,
+  autoCaptureConfidenceThreshold: 0.55,
+  autoCaptureCooldownMs: 1800000,
 };
 
 // ── Auth ─────────────────────────────────────────────

@@ -13,7 +13,15 @@ import {
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/hooks/use-auth';
-import { useSpace, useDeleteSpace, useSubspaces } from '@/lib/api/spaces';
+import {
+    useSpace,
+    useDeleteSpace,
+    useSubspaces,
+    useCreateSubspace,
+    useUpdateSubspace,
+    useDeleteSubspace,
+    useMergeSubspace,
+} from '@/lib/api/spaces';
 import { useSpaceArtifacts } from '@/lib/api/artifacts';
 import type { Artifact, Subspace } from '@/types/api';
 import { ItemDetailModal } from '@/components/items/item-detail-modal';
@@ -133,9 +141,13 @@ export default function SpaceDetailPage() {
     // Queries
     const { data: space, isLoading: spaceLoading } = useSpace(spaceId as number, user?.id);
     const { data: subspaces } = useSubspaces(spaceId as number, user?.id);
-    const { data: artifactsData, fetchNextPage, hasNextPage, isFetchingNextPage } = useSpaceArtifacts(spaceId, user?.id);
+    const { data: artifactsData } = useSpaceArtifacts(spaceId, user?.id);
+    const { mutateAsync: createSubspace, isPending: isCreatingSubspace } = useCreateSubspace();
+    const { mutateAsync: updateSubspace, isPending: isUpdatingSubspace } = useUpdateSubspace();
+    const { mutateAsync: removeSubspace, isPending: isDeletingSubspace } = useDeleteSubspace();
+    const { mutateAsync: mergeSubspace, isPending: isMergingSubspace } = useMergeSubspace();
 
-    const artifacts = useMemo(() => artifactsData?.pages.flatMap(page => page.items) ?? [], [artifactsData]);
+    const artifacts = useMemo(() => artifactsData?.pages.flatMap((page) => page.items ?? page.artifacts ?? []) ?? [], [artifactsData]);
 
     const subspaceLookup = useMemo(() => {
         const lookup = new Map<number, string>();
@@ -285,14 +297,88 @@ export default function SpaceDetailPage() {
         handleTabChange('library');
     };
 
-    const notifyUnavailable = (message: string) => {
-        alert(message);
+    const handleCreateTopic = async () => {
+        if (!spaceId || isCreatingSubspace) return;
+        const name = window.prompt('New topic name');
+        if (!name) return;
+        const normalizedName = name.trim();
+        if (!normalizedName) {
+            alert('Topic name cannot be empty.');
+            return;
+        }
+        const descriptionInput = window.prompt('Topic description (optional)');
+        const description = descriptionInput?.trim() || undefined;
+        try {
+            await createSubspace({ spaceId, data: { name: normalizedName, description } });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to create topic.';
+            alert(message);
+        }
     };
 
-    const handleCreateTopic = () => notifyUnavailable('Manual topic creation is coming soon.');
-    const handleRenameTopic = (topic: Subspace) => notifyUnavailable(`Renaming "${topic.name}" will be available after the backend update.`);
-    const handleMergeTopic = (topic: Subspace) => notifyUnavailable(`Merge workflows for "${topic.name}" are coming soon.`);
-    const handleDeleteTopic = (topic: Subspace) => notifyUnavailable(`Deleting "${topic.name}" requires backend support and is not available yet.`);
+    const handleRenameTopic = async (topic: Subspace) => {
+        if (!spaceId || isUpdatingSubspace) return;
+        const nextName = window.prompt(`Rename "${topic.name}"`, topic.name);
+        if (!nextName) return;
+        const normalizedName = nextName.trim();
+        if (!normalizedName || normalizedName === topic.name) return;
+        try {
+            await updateSubspace({ spaceId, subspaceId: topic.id, data: { name: normalizedName } });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to rename topic.';
+            alert(message);
+        }
+    };
+
+    const handleMergeTopic = async (topic: Subspace) => {
+        if (!spaceId || isMergingSubspace) return;
+        const candidates = (subspaces ?? []).filter((candidate) => candidate.id !== topic.id);
+        if (candidates.length === 0) {
+            alert('No other topics available to merge into.');
+            return;
+        }
+        const options = candidates.map((candidate) => `${candidate.id}: ${candidate.name}`).join('\n');
+        const targetInput = window.prompt(
+            `Merge "${topic.name}" into topic ID:\n${options}`,
+            String(candidates[0].id)
+        );
+        if (!targetInput) return;
+        const targetId = Number(targetInput);
+        if (!Number.isFinite(targetId)) {
+            alert('Please enter a valid numeric topic ID.');
+            return;
+        }
+        const target = candidates.find((candidate) => candidate.id === targetId);
+        if (!target) {
+            alert('Selected topic ID is not valid for this space.');
+            return;
+        }
+        const confirmed = window.confirm(
+            `Merge "${topic.name}" into "${target.name}"? This will move artifacts and remove "${topic.name}".`
+        );
+        if (!confirmed) return;
+
+        try {
+            await mergeSubspace({ spaceId, sourceSubspaceId: topic.id, targetSubspaceId: target.id });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to merge topics.';
+            alert(message);
+        }
+    };
+
+    const handleDeleteTopic = async (topic: Subspace) => {
+        if (!spaceId || isDeletingSubspace) return;
+        const confirmed = window.confirm(
+            `Delete "${topic.name}"? Artifacts will stay in the space but be detached from this topic.`
+        );
+        if (!confirmed) return;
+        try {
+            await removeSubspace({ spaceId, subspaceId: topic.id });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to delete topic.';
+            alert(message);
+        }
+    };
 
     if (!spaceId) return <div className="p-6">Space not found</div>;
     if (spaceLoading) return <div className="p-6">Loading...</div>;
