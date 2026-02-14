@@ -38,6 +38,9 @@ DECLARE
     v_is_new BOOLEAN := TRUE;
     v_normalized_url TEXT;
     v_domain TEXT;
+    v_total_markers INTEGER;
+    v_matched_count INTEGER;
+    v_relevance FLOAT := 0.0;
 BEGIN
     -- Input validation
     IF p_embedding IS NULL THEN
@@ -91,6 +94,19 @@ BEGIN
     -- Normalize URL & domain
     v_normalized_url := misir.normalize_url(p_url);
     v_domain := misir.extract_domain_from_url(p_url);
+
+    -- Calculate relevance = matched_markers / total_markers_in_space
+    v_matched_count := COALESCE(array_length(p_matched_marker_ids, 1), 0);
+    
+    SELECT COUNT(*) INTO v_total_markers
+    FROM misir.marker
+    WHERE space_id = p_space_id AND user_id = p_user_id;
+    
+    IF v_total_markers > 0 AND v_matched_count > 0 THEN
+        v_relevance := LEAST(1.0, v_matched_count::FLOAT / v_total_markers::FLOAT);
+    ELSE
+        v_relevance := 0.0;
+    END IF;
     
     -- UPSERT artifact
     INSERT INTO misir.artifact (
@@ -101,6 +117,7 @@ BEGIN
         engagement_level, content_source,
         dwell_time_ms, scroll_depth, reading_depth,
         word_count, matched_marker_ids,
+        relevance,
         captured_at, created_at
     ) VALUES (
         p_user_id, p_space_id, p_subspace_id, p_session_id,
@@ -110,6 +127,7 @@ BEGIN
         p_engagement_level, p_content_source,
         p_dwell_time_ms, p_scroll_depth, p_reading_depth,
         p_word_count, p_matched_marker_ids,
+        v_relevance,
         p_captured_at, NOW()
     )
     ON CONFLICT (user_id, normalized_url) DO UPDATE SET
@@ -121,6 +139,7 @@ BEGIN
                 THEN EXCLUDED.matched_marker_ids
             ELSE misir.artifact.matched_marker_ids
         END,
+        relevance = GREATEST(misir.artifact.relevance, EXCLUDED.relevance),
         dwell_time_ms = GREATEST(misir.artifact.dwell_time_ms, EXCLUDED.dwell_time_ms),
         scroll_depth = GREATEST(misir.artifact.scroll_depth, EXCLUDED.scroll_depth),
         reading_depth = GREATEST(misir.artifact.reading_depth, EXCLUDED.reading_depth),
