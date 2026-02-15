@@ -25,7 +25,6 @@ if (typeof window === 'undefined' || !window.addEventListener) {
 import {
   fetchSpaces,
   captureArtifact,
-  getClassifierStatus,
   healthCheck,
   getConfig,
   setConfig,

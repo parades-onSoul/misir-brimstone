@@ -15,10 +15,6 @@ import type {
   CaptureResponse,
   Space,
   SensorConfig,
-  ScrapedPage,
-  ReadingMetrics,
-  EngagementLevel,
-  ClassificationResult,
 } from '@/types';
 import { getAccessToken, getAuthState } from '@/api/supabase';
 
@@ -244,21 +240,6 @@ export async function captureArtifact(
     method: 'POST',
     body: JSON.stringify(normalizedPayload),
   }, 0, CAPTURE_REQUEST_TIMEOUT_MS);
-}
-
-export async function classifyContent(
-  page: ScrapedPage,
-  metrics: ReadingMetrics,
-  engagement: EngagementLevel
-): Promise<ClassificationResult> {
-  return apiFetch<ClassificationResult>('/artifacts/classify', {
-    method: 'POST',
-    body: JSON.stringify({ page, metrics, engagement }),
-  });
-}
-
-export async function getClassifierStatus(): Promise<{ available: boolean; mode: string }> {
-  return apiFetch<{ available: boolean; mode: string }>('/artifacts/classify/status');
 }
 
 /**

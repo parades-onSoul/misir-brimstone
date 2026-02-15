@@ -7,15 +7,27 @@ import {
   validateGroqOutput,
 } from '../lib/ai/validation';
 
+const marker = (text: string, weight = 1) => ({ text, weight });
+
 test('validateGroqOutput enforces marker minimums per mode', () => {
   const input = [
     {
       name: 'Foundations',
-      markers: ['quarks', 'leptons', 'gauge bosons', 'symmetry'],
+      markers: [
+        marker('quarks'),
+        marker('leptons'),
+        marker('gauge bosons'),
+        marker('symmetry'),
+      ],
     },
     {
       name: 'Experiments',
-      markers: ['detectors', 'collider', 'luminosity', 'event reconstruction'],
+      markers: [
+        marker('detectors'),
+        marker('collider'),
+        marker('luminosity'),
+        marker('event reconstruction'),
+      ],
     },
   ];
 
@@ -28,7 +40,12 @@ test('validateGroqOutput fails strict advanced mode when underfilled', () => {
   const input = [
     {
       name: 'Field Theory',
-      markers: ['lagrangian', 'renormalization', 'gauge invariance', 'effective field theory'],
+      markers: [
+        marker('lagrangian'),
+        marker('renormalization'),
+        marker('gauge invariance'),
+        marker('effective field theory'),
+      ],
     },
   ];
 
@@ -42,7 +59,12 @@ test('validateGroqOutput allows underfilled output in relaxed mode', () => {
   const input = [
     {
       name: 'Field Theory',
-      markers: ['lagrangian', 'renormalization', 'gauge invariance', 'effective field theory'],
+      markers: [
+        marker('lagrangian'),
+        marker('renormalization'),
+        marker('gauge invariance'),
+        marker('effective field theory'),
+      ],
     },
   ];
 
@@ -55,11 +77,15 @@ test('applyMarkerRepairs fills missing markers while preserving uniqueness and c
   const subspaces = [
     {
       name: 'Field Theory',
-      markers: ['lagrangian', 'renormalization', 'gauge invariance'],
+      markers: [
+        marker('lagrangian'),
+        marker('renormalization'),
+        marker('gauge invariance'),
+      ],
     },
     {
       name: 'Detectors',
-      markers: ['tracker', 'calorimeter', 'trigger'],
+      markers: [marker('tracker'), marker('calorimeter'), marker('trigger')],
     },
   ];
 
@@ -80,10 +106,10 @@ test('applyMarkerRepairs fills missing markers while preserving uniqueness and c
   );
 
   const fastMax = MODE_MARKER_LIMITS.fast.max;
-  assert.equal(repaired[0].markers.includes('effective field theory'), true);
-  assert.equal(repaired[0].markers.includes('ward identity'), false);
+  assert.equal(repaired[0].markers.some((m) => m.text === 'effective field theory'), true);
+  assert.equal(repaired[0].markers.some((m) => m.text === 'ward identity'), false);
   assert.equal(repaired[0].markers.length, fastMax);
-  assert.equal(repaired[1].markers.includes('pileup mitigation'), true);
-  assert.equal(repaired[1].markers.includes('calorimeter'), true);
+  assert.equal(repaired[1].markers.some((m) => m.text === 'pileup mitigation'), true);
+  assert.equal(repaired[1].markers.some((m) => m.text === 'calorimeter'), true);
   assert.equal(repaired[1].markers.length, fastMax);
 });

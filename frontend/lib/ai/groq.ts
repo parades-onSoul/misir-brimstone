@@ -25,6 +25,12 @@ interface GroqGenerateOptions {
   mode?: PromptMode;
 }
 
+interface FallbackBlueprint {
+  label: string;
+  depth?: 'foundational' | 'intermediate' | 'advanced';
+  prerequisites?: number[];
+}
+
 /**
  * Sleep helper for retry delays
  */
@@ -56,6 +62,147 @@ function stripCodeFences(content: string): string {
     text = text.replace(/^```\s*/, '').replace(/\s*```$/, '');
   }
   return text;
+}
+
+function toTitleCase(input: string): string {
+  return input
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word[0]?.toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+function normalizePhrase(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractKeywordPool(options: GroqGenerateOptions): string[] {
+  const source = normalizePhrase(
+    `${options.spaceName} ${options.description || ''} ${options.intention || ''}`
+  );
+  const stopWords = new Set([
+    'the', 'and', 'for', 'with', 'this', 'that', 'from', 'into', 'your', 'you',
+    'are', 'how', 'what', 'when', 'where', 'why', 'learn', 'study', 'about',
+    'need', 'want', 'build', 'create', 'using', 'use', 'into', 'over', 'under',
+    'through', 'across', 'their', 'them', 'they', 'will', 'would', 'could',
+  ]);
+  const tokens = source
+    .split(' ')
+    .filter((token) => token.length >= 3 && !stopWords.has(token));
+  return Array.from(new Set(tokens));
+}
+
+function getFallbackBlueprints(mode: PromptMode): FallbackBlueprint[] {
+  if (mode === 'fast') {
+    return [
+      { label: 'Foundations' },
+      { label: 'Core Concepts' },
+      { label: 'Practical Applications' },
+    ];
+  }
+  if (mode === 'advanced') {
+    return [
+      { label: 'Foundational Concepts', depth: 'foundational' },
+      { label: 'Mathematical and Formal Tools', depth: 'foundational' },
+      { label: 'Core Theories', depth: 'intermediate', prerequisites: [0, 1] },
+      { label: 'Methods and Instrumentation', depth: 'intermediate', prerequisites: [1] },
+      { label: 'Modeling and Analysis', depth: 'intermediate', prerequisites: [1, 2] },
+      { label: 'Advanced Applications', depth: 'advanced', prerequisites: [2, 3, 4] },
+      { label: 'Research Frontiers', depth: 'advanced', prerequisites: [5] },
+    ];
+  }
+  return [
+    { label: 'Foundations' },
+    { label: 'Core Concepts' },
+    { label: 'Methods and Tools' },
+    { label: 'Applications' },
+    { label: 'Synthesis and Next Steps' },
+  ];
+}
+
+function buildDeterministicFallbackSubspaces(
+  options: GroqGenerateOptions,
+  mode: PromptMode
+): SubspaceWithMarkers[] {
+  const markerCount = MODE_MARKER_LIMITS[mode].min;
+  const blueprints = getFallbackBlueprints(mode);
+  const keywordPool = extractKeywordPool(options);
+  const defaultPool = [
+    'fundamentals',
+    'principles',
+    'methods',
+    'analysis',
+    'applications',
+    'evaluation',
+    'systems',
+    'practice',
+    'research',
+    'strategy',
+  ];
+  const pool = keywordPool.length ? keywordPool : defaultPool;
+  const usedMarkers = new Set<string>();
+  const spaceSlug = normalizePhrase(options.spaceName || 'domain');
+
+  const subspaceNames = blueprints.map((blueprint) =>
+    toTitleCase(`${options.spaceName} ${blueprint.label}`.trim())
+  );
+
+  return blueprints.map((blueprint, index) => {
+    const themes = [
+      normalizePhrase(blueprint.label),
+      'key terminology',
+      'core methods',
+      'common patterns',
+      'critical questions',
+      'practical workflow',
+    ];
+
+    const markers: Array<{ text: string; weight: number }> = [];
+    let cursor = 0;
+
+    while (markers.length < markerCount && cursor < 60) {
+      const seed = pool[(index + cursor) % pool.length];
+      const theme = themes[cursor % themes.length];
+      const candidate = normalizePhrase(
+        `${seed} ${theme.includes(seed) ? '' : theme}`.trim()
+      );
+      const fallbackCandidate = normalizePhrase(`${spaceSlug} ${theme}`.trim());
+      const markerText = candidate || fallbackCandidate;
+
+      if (markerText && !usedMarkers.has(markerText)) {
+        usedMarkers.add(markerText);
+        markers.push({
+          text: markerText,
+          weight: Math.max(0.6, 1 - markers.length * 0.1),
+        });
+      }
+      cursor += 1;
+    }
+
+    while (markers.length < markerCount) {
+      const filler = normalizePhrase(`${spaceSlug} focus ${index + 1} marker ${markers.length + 1}`);
+      if (!usedMarkers.has(filler)) {
+        usedMarkers.add(filler);
+        markers.push({ text: filler, weight: Math.max(0.6, 1 - markers.length * 0.1) });
+      }
+    }
+
+    const description = `Build working knowledge of ${normalizePhrase(blueprint.label)} in ${options.spaceName}.`;
+    const prerequisites = blueprint.prerequisites?.map((idx) => subspaceNames[idx]).filter(Boolean);
+
+    return {
+      name: subspaceNames[index],
+      description,
+      markers,
+      depth: blueprint.depth,
+      prerequisites: prerequisites || [],
+      suggested_study_order: index + 1,
+    };
+  });
 }
 
 function parseModeFromClassifierOutput(content: string): PromptMode | null {
@@ -358,6 +505,16 @@ export async function generateSubspacesWithMarkers(
 export async function generateWithFallback(
   options: GroqGenerateOptions
 ): Promise<SubspaceWithMarkers[]> {
-  // Just call the main generation function - let it fail if it fails
-  return await generateSubspacesWithMarkers(options);
+  try {
+    return await generateSubspacesWithMarkers(options);
+  } catch (error) {
+    const mode = options.mode || (await classifyPromptMode(options.intention)).mode;
+    const fallback = buildDeterministicFallbackSubspaces(options, mode);
+    const validated = validateGroqOutput(fallback, mode, { enforceMarkerMinimum: true });
+    console.warn(
+      `Groq generation failed, using deterministic fallback (${mode}).`,
+      error instanceof Error ? error.message : error
+    );
+    return validated;
+  }
 }

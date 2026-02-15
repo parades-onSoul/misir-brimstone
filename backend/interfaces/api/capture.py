@@ -42,6 +42,10 @@ BASE_WEIGHT_MAP = {
     'saturated': 2.0,    # Deep immersion
 }
 
+# If centroid-vs-marker disagreement margin is this low, treat assignment as ambiguous
+# and prefer marker-informed routing to avoid early centroid lock-in.
+MARKER_HINT_OVERRIDE_MARGIN = 0.08
+
 
 from infrastructure.repositories.base import get_supabase_client
 from infrastructure.services.embedding_service import get_embedding_service
@@ -344,6 +348,40 @@ def _repair_embeddings_for_space(
             continue
 
 
+def _apply_marker_override(
+    *,
+    nearest_subspace_id: Optional[int],
+    margin: Optional[float],
+    updates_centroid: bool,
+    marker_subspace_id: Optional[int],
+) -> tuple[Optional[int], bool]:
+    """
+    Resolve subspace assignment when centroid and marker hints disagree.
+
+    Policy:
+    - If no nearest centroid candidate, use marker hint.
+    - If centroid update is already blocked, prefer marker hint.
+    - If centroid and marker disagree with low margin, treat as ambiguous and prefer marker hint.
+    - Otherwise keep centroid winner.
+    """
+    if marker_subspace_id is None:
+        return nearest_subspace_id, updates_centroid
+
+    if nearest_subspace_id is None:
+        return marker_subspace_id, False
+
+    if nearest_subspace_id == marker_subspace_id:
+        return nearest_subspace_id, updates_centroid
+
+    if not updates_centroid:
+        return marker_subspace_id, False
+
+    if _safe_float(margin, 0.0) <= MARKER_HINT_OVERRIDE_MARGIN:
+        return marker_subspace_id, False
+
+    return nearest_subspace_id, updates_centroid
+
+
 def get_current_user(
     authorization: str = Header(None),
     client: Client = Depends(get_supabase_client)
@@ -446,13 +484,13 @@ async def capture_artifact(
                 space_id=body.space_id
             )
             if margin_result.nearest_subspace_id is not None:
-                resolved_subspace_id = margin_result.nearest_subspace_id
                 resolved_margin = margin_result.margin
-                resolved_updates_centroid = margin_result.updates_centroid
-                # If centroid update is blocked by low margin, marker hints can still
-                # provide a stable assignment target for UI/topic stats.
-                if not resolved_updates_centroid and inferred_marker_subspace_id is not None:
-                    resolved_subspace_id = inferred_marker_subspace_id
+                resolved_subspace_id, resolved_updates_centroid = _apply_marker_override(
+                    nearest_subspace_id=margin_result.nearest_subspace_id,
+                    margin=margin_result.margin,
+                    updates_centroid=margin_result.updates_centroid,
+                    marker_subspace_id=inferred_marker_subspace_id,
+                )
         except Exception:
             # Fall back to client-provided defaults if assignment fails.
             pass
@@ -500,9 +538,13 @@ async def capture_artifact(
                     space_id=body.space_id,
                 )
                 if retry_margin_result.nearest_subspace_id is not None:
-                    resolved_subspace_id = retry_margin_result.nearest_subspace_id
                     resolved_margin = retry_margin_result.margin
-                    resolved_updates_centroid = retry_margin_result.updates_centroid
+                    resolved_subspace_id, resolved_updates_centroid = _apply_marker_override(
+                        nearest_subspace_id=retry_margin_result.nearest_subspace_id,
+                        margin=retry_margin_result.margin,
+                        updates_centroid=retry_margin_result.updates_centroid,
+                        marker_subspace_id=inferred_marker_subspace_id,
+                    )
             except Exception:
                 pass
 

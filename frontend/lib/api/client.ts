@@ -348,12 +348,35 @@ class ApiClient {
 
         /**
          * Get alerts for a space
-         * GET /spaces/{id}/alerts
+         * Preferred: GET /spaces/{id}/analytics/alerts
+         * Legacy:    GET /spaces/{id}/alerts
          */
         getAlerts: async (spaceId: number, _userId?: string): Promise<SpaceAlertsResponse> => {
             void _userId;
             if (!spaceId) throw new Error('spaceId is required');
-            return this.request<SpaceAlertsResponse>(`/spaces/${spaceId}/alerts`);
+            try {
+                const smartAlerts = await this.request<SmartAlert[]>(`/spaces/${spaceId}/analytics/alerts`);
+                const alerts = smartAlerts.map((alert, index) => ({
+                    id: `${spaceId}-${alert.type}-${index}`,
+                    type: alert.type,
+                    severity: alert.severity,
+                    title: alert.title,
+                    message: alert.message,
+                    affected_artifacts: [],
+                    suggested_actions: [],
+                    space_id: spaceId,
+                }));
+                return {
+                    alerts,
+                    count: alerts.length,
+                };
+            } catch (error) {
+                // Backward compatibility with older backend route shape.
+                if (error instanceof ApiError && error.problem.status === 404) {
+                    return this.request<SpaceAlertsResponse>(`/spaces/${spaceId}/alerts`);
+                }
+                throw error;
+            }
         },
     };
 
