@@ -25,12 +25,13 @@ export type SignalType = 'semantic' | 'temporal' | 'behavioral';
 
 export interface CreateMarkerInput {
     text: string;
+    weight: number;
 }
 
 export interface CreateSubspaceInput {
     name: string;
     description?: string;
-    markers?: string[];
+    markers?: CreateMarkerInput[];
     depth?: string;
     prerequisites?: string[];
     suggested_study_order?: number;
@@ -318,10 +319,10 @@ export interface SubspaceHealth {
 export interface AnalyticsResponse {
     total_artifacts: number;
     engagement_distribution: {
-      latent: number;
-      discovered: number;
-      engaged: number;
-      saturated: number;
+        latent: number;
+        discovered: number;
+        engaged: number;
+        saturated: number;
     };
     top_domains: DomainStat[];
     activity_level: string; // High, Medium, Low
@@ -361,7 +362,7 @@ export interface DriftEvent {
     subspace_id: number;
     subspace_name: string;
     drift_magnitude: number;
-    occurred_at: string; 
+    occurred_at: string;
     trigger_signal_id: number | null;
 }
 

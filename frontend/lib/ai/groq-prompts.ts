@@ -12,7 +12,7 @@ export type PromptMode = 'standard' | 'advanced' | 'fast';
 export interface SubspaceWithMarkers {
   name: string;
   description?: string;
-  markers: string[];
+  markers: Array<{ text: string; weight: number }>;
   depth?: 'foundational' | 'intermediate' | 'advanced';
   prerequisites?: string[];
   suggested_study_order?: number;
@@ -64,7 +64,10 @@ STEP 3: GENERATE SUBSPACES
 OUTPUT: JSON array of subspaces, each with:
 - name: Semantic category (noun phrase, 2-4 words, match detected complexity)
 - description: Why this subspace matters (1 sentence, 20 words max)
-- markers: Array of 4-6 precise keywords/phrases (adapt terminology to complexity level)
+- markers: Array of objects { "text": "keyword", "weight": 0.0-1.0 }
+  - weight 0.9-1.0: Core defining concept
+  - weight 0.7-0.8: Important aspect
+  - weight 0.5-0.6: Related topic
 
 QUALITY CRITERIA (Always Follow):
 
@@ -144,7 +147,7 @@ OUTPUT: JSON array with this structure:
     "name": "Subspace Name",
     "depth": "foundational|intermediate|advanced",
     "description": "Why learners need this (1 sentence, 20 words max)",
-    "markers": [...],
+    "markers": [ { "text": "keyword", "weight": 0.9 } ],
     "prerequisites": ["name of other subspace"],
     "suggested_study_order": 1
   }
@@ -214,7 +217,7 @@ QUALITY RULES:
 
 RESPONSE FORMAT:
 - Return ONLY valid JSON array
-- Minimal structure: [{ "name": "...", "description": "...", "markers": [...] }]
+- Minimal structure: [{ "name": "...", "description": "...", "markers": [{ "text": "keyword", "weight": 0.8 }] }]
 
 CRITICAL RULES:
 - ✅ DO remove non-essential subspaces

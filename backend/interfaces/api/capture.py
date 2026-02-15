@@ -47,6 +47,9 @@ from infrastructure.repositories.base import get_supabase_client
 from infrastructure.services.embedding_service import get_embedding_service
 from infrastructure.services.margin_service import AssignmentMarginService
 
+router = APIRouter()
+
+
 # Request/Response DTOs
 class CaptureRequest(BaseModel):
     """API request for artifact capture."""
@@ -235,7 +238,7 @@ def _derive_marker_hints(
         return ([], None)
 
     marker_scores.sort(key=lambda item: item[1], reverse=True)
-    top_markers = marker_scores[:8]
+    top_markers = marker_scores[:50]
     matched_marker_ids = [marker_id for marker_id, _ in top_markers]
 
     subspace_scores: dict[int, float] = {}

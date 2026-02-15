@@ -34,13 +34,14 @@ router = APIRouter(prefix="/spaces", tags=["spaces"])
 class CreateMarkerInput(BaseModel):
     """Marker to create for a subspace."""
     text: str
+    weight: float = 1.0
 
 
 class CreateSubspaceInput(BaseModel):
     """Subspace to create with a space."""
     name: str
     description: Optional[str] = None
-    markers: list[str] = []
+    markers: list[CreateMarkerInput] = []
     depth: Optional[str] = None
     prerequisites: list[str] = []
     suggested_study_order: Optional[int] = None
@@ -50,24 +51,27 @@ class CreateSpaceRequest(BaseModel):
     """Request to create a space."""
     user_id: Optional[str] = None  # Deprecated: user identity comes from JWT
     name: str
-    description: Optional[str] = None
-    intention: Optional[str] = None
+    intention: Optional[str] = None  # User's learning goal or objective
     subspaces: list[CreateSubspaceInput] = []
+    
+    # Deprecated fields (kept for backward compatibility)
+    description: Optional[str] = None  # Maps to intention internally
 
 
 class UpdateSpaceRequest(BaseModel):
     """Request to update mutable space fields."""
     name: Optional[str] = None
-    description: Optional[str] = None
+    intention: Optional[str] = None  # User's learning goal or objective
 
 
 class SpaceResponse(BaseModel):
     """Space response."""
     id: int
     name: str
-    description: Optional[str]
+    intention: Optional[str]  # User's learning goal/objective
     user_id: str
     artifact_count: int
+    evidence: float = 0.0  # Weighted average confidence of subspaces
 
 
 class SpaceListResponse(BaseModel):
@@ -206,9 +210,10 @@ async def list_spaces(
             SpaceResponse(
                 id=r.id,
                 name=r.name,
-                description=r.description,
+                intention=r.intention,
                 user_id=r.user_id,
-                artifact_count=r.artifact_count
+                artifact_count=r.artifact_count,
+                evidence=r.evidence
             )
             for r in results
         ],
@@ -228,7 +233,7 @@ async def create_space(
     Create a new space.
     
     Args:
-        body: CreateSpaceRequest with name and optional description
+        body: CreateSpaceRequest with name and optional intention
     
     Returns:
         SpaceResponse with created space
@@ -255,8 +260,7 @@ async def create_space(
     cmd = CreateSpaceCommand(
         user_id=current_user_id,
         name=body.name,
-        description=body.description,
-        intention=body.intention,
+        intention=body.intention or body.description,  # Support both for backward compat
         subspaces=subspaces_data
     )
     result = await handler.create(cmd)
@@ -264,9 +268,10 @@ async def create_space(
     return SpaceResponse(
         id=result.id,
         name=result.name,
-        description=result.description,
+        intention=result.intention,
         user_id=result.user_id,
-        artifact_count=result.artifact_count
+        artifact_count=result.artifact_count,
+        evidence=result.evidence
     )
 
 
@@ -338,9 +343,10 @@ async def get_space(
     return SpaceResponse(
         id=result.id,
         name=result.name,
-        description=result.description,
+        intention=result.intention,
         user_id=result.user_id,
-        artifact_count=result.artifact_count
+        artifact_count=result.artifact_count,
+        evidence=result.evidence
     )
 
 
@@ -358,9 +364,9 @@ async def update_space(
 
     Supported fields:
     - name
-    - description
+    - intention (user's learning goal)
     """
-    if body.name is None and body.description is None:
+    if body.name is None and body.intention is None:
         raise Problem(
             status=400,
             title="Bad Request",
@@ -373,7 +379,7 @@ async def update_space(
         space_id=space_id,
         user_id=current_user_id,
         name=body.name,
-        description=body.description,
+        intention=body.intention,
     )
     result = await handler.update(cmd)
 
@@ -388,9 +394,10 @@ async def update_space(
     return SpaceResponse(
         id=result.id,
         name=result.name,
-        description=result.description,
+        intention=result.intention,
         user_id=result.user_id,
-        artifact_count=result.artifact_count
+        artifact_count=result.artifact_count,
+        evidence=result.evidence
     )
 
 

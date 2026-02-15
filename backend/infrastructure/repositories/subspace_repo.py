@@ -6,6 +6,7 @@ For v1, we only need read operations (subspaces created via signals).
 Returns Result[T, ErrorDetail] for type-safe error handling.
 """
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -80,6 +81,72 @@ class SubspaceRepository:
             return datetime.fromisoformat(value.replace('Z', '+00:00'))
         except Exception:
             return None
+
+    @staticmethod
+    def _cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
+        """Calculate cosine similarity between two vectors."""
+        if not vec1 or not vec2 or len(vec1) != len(vec2):
+            return 0.0
+        try:
+            dot_product = sum(a * b for a, b in zip(vec1, vec2))
+            norm1 = math.sqrt(sum(a * a for a in vec1))
+            norm2 = math.sqrt(sum(a * a for a in vec2))
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+            return dot_product / (norm1 * norm2)
+        except Exception:
+            return 0.0
+
+    async def _calculate_confidence(
+        self,
+        subspace_id: int,
+        user_id: str,
+        centroid: Optional[list[float]]
+    ) -> float:
+        """
+        Calculate confidence as average cosine similarity between signals and centroid.
+        
+        Confidence = average similarity of artifact embeddings to centroid
+        - 0.0 if no centroid or no signals
+        - Up to 1.0 if all signals are perfectly aligned with centroid
+        """
+        if not centroid:
+            return 0.0
+        
+        try:
+            # Get all signals for this subspace
+            response = (
+                self._client.schema('misir')
+                .from_('signal')
+                .select('vector')
+                .eq('subspace_id', subspace_id)
+                .eq('user_id', user_id)
+                .is_('deleted_at', 'null')
+                .execute()
+            )
+            
+            signals = response.data or []
+            if not signals:
+                return 0.0
+            
+            # Calculate average similarity
+            similarities = []
+            for signal in signals:
+                vector = self._parse_embedding(signal.get('vector'))
+                if vector:
+                    sim = self._cosine_similarity(centroid, vector)
+                    similarities.append(sim)
+            
+            if not similarities:
+                return 0.0
+            
+            # Return average similarity capped at 1.0
+            avg_similarity = sum(similarities) / len(similarities)
+            return min(1.0, max(0.0, avg_similarity))
+            
+        except Exception as e:
+            logger.warning(f"Failed to calculate confidence for subspace {subspace_id}: {e}")
+            return 0.0
 
     def _collect_subspace_artifact_stats(
         self,
@@ -229,7 +296,11 @@ class SubspaceRepository:
                     description=row.get('description'),
                     user_id=row['user_id'],
                     artifact_count=max(row.get('artifact_count', 0), computed_count),
-                    confidence=row.get('confidence', 0.0),
+                    confidence=await self._calculate_confidence(
+                        row['id'], 
+                        user_id,
+                        self._parse_embedding(row.get('centroid_embedding'))
+                    ),
                     learning_rate=row.get('learning_rate', 0.1),
                     centroid_embedding=self._parse_embedding(row.get('centroid_embedding')),
                     centroid_updated_at=row.get('centroid_updated_at'),
@@ -306,7 +377,11 @@ class SubspaceRepository:
                     description=row.get('description'),
                     user_id=row['user_id'],
                     artifact_count=max(row.get('artifact_count', 0), computed_count),
-                    confidence=row.get('confidence', 0.0),
+                    confidence=await self._calculate_confidence(
+                        row['id'],
+                        user_id,
+                        self._parse_embedding(row.get('centroid_embedding'))
+                    ),
                     learning_rate=row.get('learning_rate', 0.1),
                     centroid_embedding=self._parse_embedding(row.get('centroid_embedding')),
                     centroid_updated_at=row.get('centroid_updated_at'),

@@ -44,7 +44,7 @@ interface GroqChatResponse {
 interface MarkerRepairRequest {
   name: string;
   description?: string;
-  markers: string[];
+  markers: Array<{ text: string; weight: number }>;
   needed: number;
 }
 
@@ -164,7 +164,7 @@ async function repairUnderfilledMarkers(
 
   const limits = MODE_MARKER_LIMITS[mode];
   const usedMarkers = Array.from(
-    new Set(subspaces.flatMap((s) => s.markers.map((m) => m.toLowerCase().trim())))
+    new Set(subspaces.flatMap((s: SubspaceWithMarkers) => s.markers.map((m) => m.text.toLowerCase().trim())))
   );
 
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -191,7 +191,7 @@ async function repairUnderfilledMarkers(
             subspaces_needing_markers: repairPlan.map((item) => ({
               name: item.name,
               description: item.description || '',
-              existing_markers: item.markers,
+              existing_markers: item.markers.map(m => m.text),
               needed_new_markers: item.needed,
             })),
             rules: [
@@ -233,7 +233,7 @@ export async function generateSubspacesWithMarkers(
 ): Promise<SubspaceWithMarkers[]> {
   console.log('🔑 Groq API Key present:', !!GROQ_API_KEY);
   console.log('🔑 Key length:', GROQ_API_KEY?.length || 0);
-  
+
   if (!GROQ_API_KEY) {
     throw new Error('GROQ_API_KEY not configured. Check NEXT_PUBLIC_GROQ_API_KEY in .env.local');
   }
@@ -242,8 +242,8 @@ export async function generateSubspacesWithMarkers(
   const modeClassification = options.mode
     ? { mode: options.mode, source: 'explicit', confidence: 1 }
     : await classifyPromptMode(options.intention, {
-        llmFallback: classifyPromptModeWithGroq,
-      });
+      llmFallback: classifyPromptModeWithGroq,
+    });
   const mode = modeClassification.mode;
   console.log(
     '🎯 Selected prompt mode:',
@@ -251,7 +251,7 @@ export async function generateSubspacesWithMarkers(
     `source=${modeClassification.source}`,
     `confidence=${modeClassification.confidence.toFixed(2)}`
   );
-  
+
   // Format the prompt with user inputs
   const prompt = formatPrompt(
     mode,
@@ -295,17 +295,17 @@ export async function generateSubspacesWithMarkers(
 
       if (!response.ok) {
         const errorText = await response.text();
-        
+
         // Check if it's a retryable error (503, 429, 500)
         const isRetryable = [503, 429, 500].includes(response.status);
-        
+
         if (isRetryable && attempt < retries) {
           const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
           console.log(`Groq API temporarily unavailable (${response.status}). Retrying in ${delay}ms...`);
           await sleep(delay);
           continue; // Retry
         }
-        
+
         // Non-retryable error or out of retries
         throw new Error(`Groq API error: ${response.status} - ${errorText}`);
       }
@@ -314,7 +314,7 @@ export async function generateSubspacesWithMarkers(
 
       // Extract generated text
       const generatedText = data.choices?.[0]?.message?.content;
-      
+
       if (!generatedText) {
         throw new Error('No content generated from Groq');
       }
@@ -338,7 +338,7 @@ export async function generateSubspacesWithMarkers(
       const validated = validateGroqOutput(repaired, mode, { enforceMarkerMinimum: true });
 
       return validated; // Success - exit retry loop
-      
+
     } catch (error) {
       // If not retryable or last attempt, throw
       if (attempt === retries) {
@@ -347,7 +347,7 @@ export async function generateSubspacesWithMarkers(
       // Otherwise, continue to next retry attempt
     }
   }
-  
+
   // Should never reach here
   throw new Error('Unexpected error in generateSubspacesWithMarkers');
 }

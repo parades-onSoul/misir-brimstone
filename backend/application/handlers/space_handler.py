@@ -54,14 +54,14 @@ class UpdateSpaceCommand:
     space_id: int
     user_id: str
     name: Optional[str] = None
-    description: Optional[str] = None
+    intention: Optional[str] = None
 
     def __post_init__(self):
         if not self.user_id:
             raise ValueError("user_id is required")
         if self.space_id <= 0:
             raise ValueError("space_id must be positive")
-        if self.name is None and self.description is None:
+        if self.name is None and self.intention is None:
             raise ValueError("at least one mutable field is required")
 
 
@@ -102,7 +102,7 @@ class SpaceHandler:
         result = await self._repository.create(
             user_id=cmd.user_id,
             name=cmd.name.strip(),
-            description=cmd.description.strip() if cmd.description else None,
+            intention=cmd.intention.strip() if cmd.intention else None,
             embedding=intention_embedding
         )
         
@@ -143,11 +143,27 @@ class SpaceHandler:
                         logger.info(f"Creating {len(markers)} markers for subspace {subspace_id}...")
                         marker_embeddings = []  # Collect embeddings for centroid computation
                         
-                        for marker_text in markers:
+                        for marker_input in markers:
+                            # Handle both object (new) and string (legacy)
+                            if isinstance(marker_input, str):
+                                marker_text = marker_input
+                                marker_weight = 1.0
+                            else:
+                                marker_text = getattr(marker_input, 'text', None) 
+                                if not marker_text and isinstance(marker_input, dict):
+                                     marker_text = marker_input.get('text')
+                                
+                                marker_weight = getattr(marker_input, 'weight', 1.0)
+                                if isinstance(marker_input, dict):
+                                     marker_weight = marker_input.get('weight', 1.0)
+
+                            if not marker_text:
+                                continue
+
                             try:
                                 # Generate embedding for marker
                                 embedding_result = self._embedding_service.embed_text(marker_text)
-                                logger.info(f"Generated embedding for '{marker_text}': dim={embedding_result.dimension}")
+                                logger.info(f"Generated embedding for '{marker_text}' (weight={marker_weight}): dim={embedding_result.dimension}")
                                 
                                 # Insert marker
                                 marker_response = (
@@ -158,7 +174,7 @@ class SpaceHandler:
                                         'user_id': cmd.user_id,
                                         'label': marker_text,
                                         'embedding': embedding_result.vector,
-                                        'weight': 1.0
+                                        'weight': marker_weight
                                     })
                                     .execute()
                                 )
@@ -170,14 +186,14 @@ class SpaceHandler:
                                     self._client.schema('misir').from_('subspace_marker').insert({
                                         'subspace_id': subspace_id,
                                         'marker_id': marker_id,
-                                        'weight': 1.0,
+                                        'weight': marker_weight,
                                         'source': 'user_defined'
                                     }).execute()
                                     
                                     # Collect embedding for centroid
                                     marker_embeddings.append(embedding_result.vector)
                                     
-                                    logger.info(f"Created marker {marker_id}: '{marker_text}' and linked to subspace {subspace_id}")
+                                    logger.info(f"Created marker {marker_id}: '{marker_text}' (w={marker_weight}) and linked to subspace {subspace_id}")
                                 
                             except Exception as marker_error:
                                 logger.error(f"Failed to create marker '{marker_text}': {marker_error}", exc_info=True)
@@ -230,12 +246,12 @@ class SpaceHandler:
     async def update(self, cmd: UpdateSpaceCommand) -> Optional[SpaceResult]:
         """Update mutable space fields."""
         name = cmd.name.strip() if isinstance(cmd.name, str) else None
-        description = cmd.description.strip() if isinstance(cmd.description, str) else cmd.description
+        intention = cmd.intention.strip() if isinstance(cmd.intention, str) else cmd.intention
         return await self._repository.update(
             space_id=cmd.space_id,
             user_id=cmd.user_id,
             name=name,
-            description=description,
+            intention=intention,
         )
 
     async def delete(self, space_id: int, user_id: str) -> bool:

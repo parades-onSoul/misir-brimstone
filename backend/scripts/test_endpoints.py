@@ -203,7 +203,7 @@ def main():
                 print("\n⚠️  No spaces found. Create a space first to test space-specific endpoints.")
                 print("   You can create a space via the frontend or API:")
                 print(f"   POST {BASE_URL}/spaces?user_id={TEST_USER_ID}")
-                print('   Body: {"name": "Test Space", "description": "Testing"}')
+                print('   Body: {"name": "Test Space", "intention": "Testing"}')
         
     except Exception as e:
         print(f"\n❌ Could not fetch spaces: {e}")

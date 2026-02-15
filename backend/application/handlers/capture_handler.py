@@ -53,7 +53,8 @@ class CaptureHandler:
         
         1. Validate embedding dimension (from config)
         2. Log suspicious reading_depth (don't reject)
-        3. Call repository (RPC)
+        3. Auto-assign to General subspace if no subspace specified
+        4. Call repository (RPC)
         
         Returns:
             Result[CaptureResult, ErrorDetail]: Capture result or error
@@ -71,7 +72,26 @@ class CaptureHandler:
         # 2. Log suspicious reading depth (optional monitoring)
         self._log_if_reading_depth_suspicious(cmd)
         
-        # 3. Delegate to repository (DB is arbiter)
+        # 3. Auto-assign to "General" subspace if no subspace specified
+        if not cmd.subspace_id and self._subspace_repo:
+            try:
+                result = await self._subspace_repo.get_by_space(cmd.space_id, cmd.user_id)
+                if result.is_ok():
+                    subspaces = result.unwrap()
+                    # Find or use first subspace named "General"
+                    general = next((s for s in subspaces if s.name.lower() == "general"), None)
+                    if general:
+                        cmd.subspace_id = general.id
+                        logger.info(f"Auto-assigned artifact to General subspace: {general.id}")
+                    elif subspaces:
+                        # Fallback: use first subspace if no General found
+                        cmd.subspace_id = subspaces[0].id
+                        logger.info(f"Auto-assigned artifact to first subspace: {subspaces[0].id}")
+            except Exception as e:
+                logger.warning(f"Failed to auto-assign subspace: {e}")
+                # Continue without auto-assignment if lookup fails
+        
+        # 4. Delegate to repository (DB is arbiter)
         result = await self._repo.ingest_with_signal(cmd)
         
         # Return early if error

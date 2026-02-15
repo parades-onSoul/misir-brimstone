@@ -332,10 +332,130 @@ function MainView({
   const [captureState, setCaptureState] = useState<'idle' | 'capturing' | 'success' | 'error'>('idle');
   const [captureError, setCaptureError] = useState('');
   const [lastArtifactId, setLastArtifactId] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // ── Scrape current page (defined early for dependency usage) ──
+  const scrapeCurrentPage = useCallback(async () => {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tabUrl = tab?.url ?? tab?.pendingUrl ?? '';
+      if (!tab?.id || !tabUrl || tabUrl.startsWith('chrome://') || tabUrl.startsWith('chrome-extension://')) {
+        console.log('[Popup] Skipping scrape: internal browser URL or no tab');
+        return;
+      }
+
+      let resp: any;
+      
+      // Attempt 1: Try to scrape directly (content script may already be loaded)
+      try {
+        resp = await chrome.tabs.sendMessage(tab.id, { type: 'SCRAPE_PAGE' });
+        if (resp?.success && resp.data) {
+          setPageData(resp.data);
+          console.log('[Popup] Page scraped successfully');
+          
+          // Auto-select best space based on page content
+          try {
+            const bestSpaceResp = await sendMessage({
+              type: 'GET_BEST_SPACE',
+              page: {
+                content: resp.data.page.content,
+                title: resp.data.page.title,
+                url: resp.data.page.url,
+              }
+            });
+            if (bestSpaceResp.success && bestSpaceResp.data) {
+              setSelectedSpaceId(bestSpaceResp.data);
+              console.log('[Popup] Auto-selected best space:', bestSpaceResp.data);
+            }
+          } catch (bestSpaceErr) {
+            console.warn('[Popup] Failed to auto-select best space:', bestSpaceErr);
+          }
+        } else {
+          console.warn('[Popup] Scrape response invalid:', resp);
+        }
+      } catch (firstErr) {
+        console.warn('[Popup] Direct scrape failed, content script not ready, attempting injection...', 
+          firstErr instanceof Error ? firstErr.message : String(firstErr));
+        
+        // Attempt 2: Inject content script and retry
+        try {
+          const manifest = chrome.runtime.getManifest();
+          const contentScriptFile = manifest.content_scripts?.[0]?.js?.[0];
+          
+          if (contentScriptFile) {
+            await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: [contentScriptFile],
+            });
+            console.log('[Popup] Content script injected, waiting for initialization...');
+            
+            // Wait longer for script to initialize
+            await new Promise((r) => setTimeout(r, 500));
+            
+            try {
+              resp = await chrome.tabs.sendMessage(tab.id, { type: 'SCRAPE_PAGE' });
+              if (resp?.success && resp.data) {
+                setPageData(resp.data);
+                console.log('[Popup] Page scraped successfully after injection');
+                
+                // Auto-select best space based on page content
+                try {
+                  const bestSpaceResp = await sendMessage({
+                    type: 'GET_BEST_SPACE',
+                    page: {
+                      content: resp.data.page.content,
+                      title: resp.data.page.title,
+                      url: resp.data.page.url,
+                    }
+                  });
+                  if (bestSpaceResp.success && bestSpaceResp.data) {
+                    setSelectedSpaceId(bestSpaceResp.data);
+                    console.log('[Popup] Auto-selected best space after injection:', bestSpaceResp.data);
+                  }
+                } catch (bestSpaceErr) {
+                  console.warn('[Popup] Failed to auto-select best space after injection:', bestSpaceErr);
+                }
+              } else {
+                console.warn('[Popup] Scrape still failed after injection');
+              }
+            } catch (retryErr) {
+              console.warn('[Popup] Scrape retry failed after injection:', 
+                retryErr instanceof Error ? retryErr.message : String(retryErr));
+              // Don't throw - let UI continue working with no page data
+            }
+          } else {
+            console.warn('[Popup] Content script file not found in manifest');
+          }
+        } catch (injectErr) {
+          console.warn('[Popup] Content script injection failed:', 
+            injectErr instanceof Error ? injectErr.message : String(injectErr));
+          // Don't throw - let UI continue working
+        }
+      }
+
+      // If we got page data, run classification
+      if (resp?.success && resp.data) {
+        const clsResp = await sendMessage({
+          type: 'CLASSIFY_CONTENT',
+          page: resp.data.page,
+          metrics: resp.data.metrics,
+          engagement: resp.data.engagement,
+        });
+        if (clsResp.success && clsResp.data) {
+          setClassification(clsResp.data);
+        }
+      }
+    } catch (err) {
+      // Catch any unexpected errors and log but don't break UI
+      console.error('[Popup] Scrape pipeline error:', err instanceof Error ? err.message : String(err));
+    }
+  }, []);
 
   // ── Init ──────────────────────────────────────────
 
   useEffect(() => {
+    console.log('[Popup] Initializing...');
+    
     // Health check
     sendMessage({ type: 'HEALTH_CHECK' }).then((r: any) => {
       setBackendHealthy(r.success && r.data?.healthy);
@@ -352,55 +472,119 @@ function MainView({
         // Use Supabase RLS for authenticated users
         const r = await sendMessage({ type: 'FETCH_SPACES_SUPABASE' });
         if (r.success && Array.isArray(r.data) && r.data.length > 0) {
+          console.log('[Popup] Loaded spaces from Supabase:', r.data.length);
           setSpaces(r.data);
           const configuredSpace = config.autoCaptureSpaceId;
+          
+          // 1. Try to restore last selected space from localStorage
+          try {
+            const savedSpaceId = localStorage.getItem('lastSelectedSpaceId');
+            if (savedSpaceId) {
+              const savedId = Number(savedSpaceId);
+              if (r.data.some((space: Space) => space.id === savedId)) {
+                console.log('[Popup] Restored last selected space from localStorage:', savedId);
+                setSelectedSpaceId(savedId);
+                return;
+              }
+            }
+          } catch (err) {
+            console.warn('[Popup] Failed to restore from localStorage:', err);
+          }
+          
+          // 2. If autoCaptureSpaceId is configured and exists, use it
           if (
             typeof configuredSpace === 'number' &&
             r.data.some((space: Space) => space.id === configuredSpace)
           ) {
             setSelectedSpaceId(configuredSpace);
-          } else if (r.data.length === 1) {
+          } 
+          // 3. Otherwise select the first space as default (most recent)
+          else if (r.data.length > 0) {
             setSelectedSpaceId(r.data[0].id);
           }
           return;
         }
         // If direct Supabase read fails or returns empty, fallback to backend API.
-        console.warn('[Misir Popup] Supabase spaces unavailable, falling back to backend', r.error);
+        console.warn('[Popup] Supabase spaces unavailable, falling back to backend', r.error);
       }
 
       // Fallback to backend API
       const r = await sendMessage({ type: 'FETCH_SPACES' });
       if (r.success && r.data) {
+        console.log('[Popup] Loaded spaces from backend:', r.data.length);
         setSpaces(r.data);
         const configuredSpace = config.autoCaptureSpaceId;
+        
+        // 1. Try to restore last selected space from localStorage
+        try {
+          const savedSpaceId = localStorage.getItem('lastSelectedSpaceId');
+          if (savedSpaceId) {
+            const savedId = Number(savedSpaceId);
+            if (r.data.some((space: Space) => space.id === savedId)) {
+              console.log('[Popup] Restored last selected space from localStorage:', savedId);
+              setSelectedSpaceId(savedId);
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn('[Popup] Failed to restore from localStorage:', err);
+        }
+        
+        // 2. If autoCaptureSpaceId is configured and exists, use it
         if (
           typeof configuredSpace === 'number' &&
           r.data.some((space: Space) => space.id === configuredSpace)
         ) {
           setSelectedSpaceId(configuredSpace);
-        } else if (r.data.length === 1) {
+        } 
+        // 3. Otherwise select the first space as default (most recent)
+        else if (r.data.length > 0) {
           setSelectedSpaceId(r.data[0].id);
         }
       }
     };
     loadSpaces();
 
-    // Load recent captures
-    sendMessage({ type: 'GET_RECENT' }).then((r: any) => {
-      if (r.success && r.data) setRecentCaptures(r.data);
-    });
+    // ── Refresh recent captures function ──
+    const refreshRecent = async () => {
+      try {
+        console.log('[Popup] Refreshing recent captures...');
+        const r = await sendMessage({ type: 'GET_RECENT' });
+        if (r.success && r.data) {
+          console.log('[Popup] Got recent captures:', r.data.length);
+          setRecentCaptures(r.data);
+        } else {
+          console.warn('[Popup] GET_RECENT response invalid:', r);
+        }
+      } catch (err) {
+        console.error('[Popup] Error refreshing recent captures:', err);
+      }
+    };
+    
+    // Initial refresh
+    refreshRecent();
+
+    // ── Periodic refresh of recent captures (every 3 seconds) ──
+    const refreshInterval = setInterval(async () => {
+      await refreshRecent();
+    }, 3000);
 
     // Scrape current page
     scrapeCurrentPage();
-  }, [auth]);
 
-  useEffect(() => {
-    if (!selectedSpaceId) return;
-    sendMessage({
-      type: 'SET_CONFIG',
-      config: { autoCaptureSpaceId: selectedSpaceId },
-    });
-  }, [selectedSpaceId]);
+    // Cleanup
+    return () => {
+      console.log('[Popup] Cleaning up interval');
+      clearInterval(refreshInterval);
+    };
+  }, [auth, config, scrapeCurrentPage]);
+
+  // ── Note: selectedSpaceId is for manual capture only ──
+  // We intentionally do NOT auto-update autoCaptureSpaceId when the user 
+  // selects a space for manual capture. This allows:
+  // 1. Users to switch between spaces for manual captures without affecting auto-capture
+  // 2. Auto-capture to use intelligent space routing based on content relevance
+  // 3. Prevents accidental "pinning" of the last manually-selected space for all future captures
 
   // ── Load subspaces and markers when space selected ──
 
@@ -426,68 +610,35 @@ function MainView({
     });
   }, [selectedSpaceId, auth]);
 
-  // ── Scrape ────────────────────────────────────────
-
-  const ensureContentScript = useCallback(async (tabId: number) => {
-    const manifest = chrome.runtime.getManifest();
-    const contentScriptFile = manifest.content_scripts?.[0]?.js?.[0];
-    if (!contentScriptFile) return;
-
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: [contentScriptFile],
-    });
-  }, []);
-
-  const scrapeCurrentPage = useCallback(async () => {
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const tabUrl = tab?.url ?? tab?.pendingUrl ?? '';
-      if (!tab?.id || !tabUrl || tabUrl.startsWith('chrome://') || tabUrl.startsWith('chrome-extension://')) {
-        return;
-      }
-
-      let resp: any;
+  // ── Persist selectedSpaceId to localStorage on changes ──
+  useEffect(() => {
+    if (selectedSpaceId) {
       try {
-        resp = await chrome.tabs.sendMessage(tab.id, { type: 'SCRAPE_PAGE' });
+        localStorage.setItem('lastSelectedSpaceId', String(selectedSpaceId));
+        console.log('[Popup] Persisted selected space to localStorage:', selectedSpaceId);
       } catch (err) {
-        // Content script may not be injected yet (site access set to "on click")
-        console.warn('[Misir Popup] Content script not ready, injecting...', err);
-        try {
-          await ensureContentScript(tab.id);
-        } catch (injectErr) {
-          console.error('[Misir Popup] Content script injection failed:', injectErr);
-          throw new Error('Content script not available on this page');
-        }
-        await new Promise((r) => setTimeout(r, 200));
-        try {
-          resp = await chrome.tabs.sendMessage(tab.id, { type: 'SCRAPE_PAGE' });
-        } catch (retryErr) {
-          console.error('[Misir Popup] Content script still not available:', retryErr);
-          throw new Error('Content script not available on this page');
-        }
+        console.warn('[Popup] Failed to persist to localStorage:', err);
       }
-
-      if (resp?.success && resp.data) {
-        setPageData(resp.data);
-
-        // Run classification in background
-        const clsResp = await sendMessage({
-          type: 'CLASSIFY_CONTENT',
-          page: resp.data.page,
-          metrics: resp.data.metrics,
-          engagement: resp.data.engagement,
-        });
-        if (clsResp.success && clsResp.data) {
-          setClassification(clsResp.data);
-        }
-      }
-    } catch (err) {
-      console.error('[Misir Popup] Scrape failed:', err);
     }
-  }, [ensureContentScript]);
+  }, [selectedSpaceId]);
 
   // ── Capture ───────────────────────────────────────
+
+  const handleManualRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      console.log('[Popup] Manual refresh triggered');
+      const r = await sendMessage({ type: 'GET_RECENT' });
+      if (r.success && r.data) {
+        console.log('[Popup] Manual refresh got data:', r.data.length);
+        setRecentCaptures(r.data);
+      }
+    } catch (err) {
+      console.error('[Popup] Manual refresh error:', err);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
 
   const handleCapture = useCallback(async () => {
     if (!selectedSpaceId || !pageData) return;
@@ -505,16 +656,15 @@ function MainView({
     if (resp.success) {
       setCaptureState('success');
       setLastArtifactId(resp.data?.artifact_id);
-      // Refresh recent
-      const recentResp = await sendMessage({ type: 'GET_RECENT' });
-      if (recentResp.success) setRecentCaptures(recentResp.data);
+      // Immediately refresh recent
+      await handleManualRefresh();
       setTimeout(() => setCaptureState('idle'), 2500);
     } else {
       setCaptureState('error');
       setCaptureError(resp.error || 'Capture failed');
       setTimeout(() => setCaptureState('idle'), 4000);
     }
-  }, [selectedSpaceId, pageData]);
+  }, [selectedSpaceId, pageData, handleManualRefresh]);
 
   // ── Render ────────────────────────────────────────
 
@@ -771,14 +921,24 @@ function MainView({
           <h3 className="text-xs font-medium text-misir-muted uppercase tracking-wider">
             Recent ({recentCaptures.length})
           </h3>
-          <button
-            onClick={() =>
-              chrome.tabs.create({ url: 'http://localhost:3000/dashboard' })
-            }
-            className="text-[10px] text-misir-accent hover:text-blue-400 flex items-center gap-0.5"
-          >
-            Dashboard <ExternalLink className="w-3 h-3" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleManualRefresh}
+              disabled={refreshing}
+              className="p-1 hover:bg-misir-surface rounded transition disabled:opacity-50"
+              title="Refresh recent captures"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-misir-muted ${refreshing ? 'animate-spin' : ''}`} />
+            </button>
+            <button
+              onClick={() =>
+                chrome.tabs.create({ url: 'http://localhost:3000/dashboard' })
+              }
+              className="text-[10px] text-misir-accent hover:text-blue-400 flex items-center gap-0.5"
+            >
+              Dashboard <ExternalLink className="w-3 h-3" />
+            </button>
+          </div>
         </div>
 
         {recentCaptures.length === 0 ? (

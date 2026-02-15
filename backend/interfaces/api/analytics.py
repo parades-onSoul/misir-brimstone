@@ -183,7 +183,7 @@ async def get_global_analytics(
     
     # 1. Overview Metrics
     all_artifacts = await artifact_repo.get_all_by_user_id(current_user_id)
-    spaces_res = client.schema("misir").from_("space").select("id, name, description").eq("user_id", current_user_id).execute()
+    spaces_res = client.schema("misir").from_("space").select("id, name, intention").eq("user_id", current_user_id).execute()
     spaces = spaces_res.data or []
 
     total_artifacts = len(all_artifacts)

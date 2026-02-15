@@ -4,6 +4,12 @@
  * Stores captures that fail to send and retries them when online.
  * Uses exponential backoff to avoid hammering the server.
  *
+/**
+ * Offline Capture Queue — IndexedDB-backed
+ *
+ * Stores captures that fail to send and retries them when online.
+ * Uses exponential backoff to avoid hammering the server.
+ *
  * Features:
  *   - Persistent IndexedDB storage (survives extension reloads)
  *   - Exponential backoff retry (1s → 2s → 4s → 8s → max 60s)
@@ -12,6 +18,7 @@
  *   - Error history per item
  */
 import type { CapturePayload } from '@/types';
+import { loggers } from '@/utils/logger';
 
 // ── Constants ────────────────────────────────────────
 
@@ -59,7 +66,7 @@ async function getDB(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = (event) => {
       const database = (event.target as IDBOpenDBRequest).result;
-      
+
       // Create object store if it doesn't exist
       if (!database.objectStoreNames.contains(STORE_NAME)) {
         const store = database.createObjectStore(STORE_NAME, { keyPath: 'id' });
@@ -151,7 +158,7 @@ export async function getReadyToRetry(): Promise<QueuedCapture[]> {
     const transaction = database.transaction([STORE_NAME], 'readonly');
     const store = transaction.objectStore(STORE_NAME);
     const index = store.index('nextRetryAt');
-    
+
     // Get all items with nextRetryAt <= now
     const range = IDBKeyRange.upperBound(now);
     const request = index.getAll(range);
@@ -241,7 +248,7 @@ export async function processQueue(
 
     for (const item of ready) {
       try {
-        console.log(`[Misir Queue] Retrying capture ${item.id} (retry #${item.retries})`);
+        loggers.queue.info(`Retrying capture`, { id: item.id, retry: item.retries });
 
         await captureFunction(item.payload);
 
@@ -249,7 +256,7 @@ export async function processQueue(
         await removeFromQueue(item.id);
         succeeded++;
 
-        console.log(`[Misir Queue] Successfully sent queued capture ${item.id}`);
+        loggers.queue.info(`Successfully sent queued capture`, { id: item.id });
       } catch (error) {
         // Failed - update retry count and next retry time
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
@@ -262,18 +269,17 @@ export async function processQueue(
         });
 
         if (!updated) {
-          console.warn(
-            `[Misir Queue] Skipping retry update for missing item ${item.id} (likely cleared or already processed)`
-          );
+          loggers.queue.warn(`Skipping retry update for missing item (likely cleared)`, { id: item.id });
           continue;
         }
 
         failed++;
 
-        console.warn(
-          `[Misir Queue] Retry failed for ${item.id}: ${errorMsg}`,
-          `Will retry at ${new Date(calculateNextRetry(item.retries + 1)).toISOString()}`
-        );
+        loggers.queue.warn(`Retry failed`, {
+          id: item.id,
+          error: errorMsg,
+          nextRetry: new Date(calculateNextRetry(item.retries + 1)).toISOString()
+        });
       }
     }
 
@@ -333,12 +339,12 @@ export async function getQueueStats(): Promise<{
     pending: queue.length - ready.length,
     oldestItem: oldest
       ? {
-          id: oldest.id,
-          timestamp: oldest.timestamp,
-          retries: oldest.retries,
-        }
+        id: oldest.id,
+        timestamp: oldest.timestamp,
+        retries: oldest.retries,
+      }
       : undefined,
   };
 }
 
-console.log('[Misir Queue] Offline queue system initialized');
+loggers.queue.info('Offline queue system initialized');

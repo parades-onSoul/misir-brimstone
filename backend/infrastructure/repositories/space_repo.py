@@ -17,9 +17,10 @@ class SpaceResult:
     """Result of space operation."""
     id: int
     name: str
-    description: Optional[str]
+    intention: Optional[str]
     user_id: str
     artifact_count: int
+    evidence: float = 0.0  # Average confidence of subspaces
 
 
 class SpaceRepository:
@@ -40,7 +41,7 @@ class SpaceRepository:
         self, 
         user_id: str, 
         name: str, 
-        description: Optional[str] = None,
+        intention: Optional[str] = None,
         embedding: Optional[list[float]] = None
     ) -> SpaceResult:
         """
@@ -49,7 +50,7 @@ class SpaceRepository:
         Args:
             user_id: Owner user ID
             name: Space name
-            description: Optional description
+            intention: Optional user learning goal/objective
         
         Returns:
             SpaceResult with created space details
@@ -59,8 +60,8 @@ class SpaceRepository:
                 'user_id': user_id,
                 'name': name,
             }
-            if description:
-                data['description'] = description
+            if intention:
+                data['intention'] = intention
             if embedding:
                 data['embedding'] = embedding
             
@@ -73,12 +74,15 @@ class SpaceRepository:
             
             if response.data and len(response.data) > 0:
                 row = response.data[0]
+                # Calculate evidence as average confidence of subspaces
+                evidence = await self._calculate_space_evidence(row['id'], user_id)
                 return SpaceResult(
                     id=row['id'],
                     name=row['name'],
-                    description=row.get('description'),
+                    intention=row.get('intention'),
                     user_id=row['user_id'],
-                    artifact_count=row.get('artifact_count', 0)
+                    artifact_count=row.get('artifact_count', 0),
+                    evidence=evidence
                 )
             else:
                 raise ValueError("Insert returned no data")
@@ -86,6 +90,44 @@ class SpaceRepository:
         except Exception as e:
             logger.error(f"Failed to create space: {e}")
             raise
+    
+    async def _calculate_space_evidence(self, space_id: int, user_id: str) -> float:
+        """
+        Calculate space evidence as weighted average of subspace confidences.
+        
+        Evidence = weighted average of subspace.confidence 
+        weighted by subspace.artifact_count
+        
+        If no subspaces, returns 0.0
+        """
+        try:
+            response = (
+                self._client.schema('misir')
+                .from_('subspace')
+                .select('artifact_count, confidence')
+                .eq('space_id', space_id)
+                .eq('user_id', user_id)
+                .execute()
+            )
+            
+            subspaces = response.data or []
+            if not subspaces:
+                return 0.0
+            
+            total_artifacts = sum(s.get('artifact_count', 0) for s in subspaces)
+            if total_artifacts == 0:
+                return 0.0
+            
+            weighted_sum = sum(
+                s.get('confidence', 0.0) * s.get('artifact_count', 0)
+                for s in subspaces
+            )
+            
+            return weighted_sum / total_artifacts
+            
+        except Exception as e:
+            logger.warning(f"Failed to calculate space evidence: {e}")
+            return 0.0
     
     async def list_by_user(self, user_id: str) -> list[SpaceResult]:
         """
@@ -108,16 +150,18 @@ class SpaceRepository:
                 .execute()
             )
             
-            return [
-                SpaceResult(
+            results = []
+            for row in (response.data or []):
+                evidence = await self._calculate_space_evidence(row['id'], user_id)
+                results.append(SpaceResult(
                     id=row['id'],
                     name=row['name'],
-                    description=row.get('description'),
+                    intention=row.get('intention'),
                     user_id=row['user_id'],
-                    artifact_count=row.get('artifact_count', 0)
-                )
-                for row in (response.data or [])
-            ]
+                    artifact_count=row.get('artifact_count', 0),
+                    evidence=evidence
+                ))
+            return results
             
         except Exception as e:
             logger.error(f"Failed to list spaces: {e}")
@@ -146,12 +190,14 @@ class SpaceRepository:
             
             if response.data and len(response.data) > 0:
                 row = response.data[0]
+                evidence = await self._calculate_space_evidence(space_id, user_id)
                 return SpaceResult(
                     id=row['id'],
                     name=row['name'],
-                    description=row.get('description'),
+                    intention=row.get('intention'),
                     user_id=row['user_id'],
-                    artifact_count=row.get('artifact_count', 0)
+                    artifact_count=row.get('artifact_count', 0),
+                    evidence=evidence
                 )
             return None
             
@@ -185,15 +231,15 @@ class SpaceRepository:
         space_id: int,
         user_id: str,
         name: Optional[str] = None,
-        description: Optional[str] = None,
+        intention: Optional[str] = None,
     ) -> Optional[SpaceResult]:
         """Update mutable fields of a space and return updated row."""
         try:
             data = {}
             if name is not None:
                 data["name"] = name
-            if description is not None:
-                data["description"] = description
+            if intention is not None:
+                data["intention"] = intention
 
             if not data:
                 return await self.get_by_id(space_id, user_id)
@@ -209,12 +255,14 @@ class SpaceRepository:
 
             if response.data and len(response.data) > 0:
                 row = response.data[0]
+                evidence = await self._calculate_space_evidence(space_id, user_id)
                 return SpaceResult(
                     id=row['id'],
                     name=row['name'],
-                    description=row.get('description'),
+                    intention=row.get('intention'),
                     user_id=row['user_id'],
-                    artifact_count=row.get('artifact_count', 0)
+                    artifact_count=row.get('artifact_count', 0),
+                    evidence=evidence
                 )
             return None
         except Exception as e:

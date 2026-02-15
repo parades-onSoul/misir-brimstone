@@ -14,15 +14,17 @@
  *   - Classifier status
  */
 
+// Import logger first
+import { loggers } from '@/utils/logger';
+
 // Guard against service worker context issues
 if (typeof window === 'undefined' || !window.addEventListener) {
-  console.log('[Misir] Service worker context detected, initializing safely');
+  loggers.background.debug('Service worker context detected, initializing safely');
 }
 
 import {
   fetchSpaces,
   captureArtifact,
-  classifyContent,
   getClassifierStatus,
   healthCheck,
   getConfig,
@@ -35,6 +37,7 @@ import {
   clearQueue,
 } from '@/storage/queue';
 import * as auth from '@/api/supabase';
+import { calculateRelevance } from '@/utils/relevance-scorer';
 import type {
   ScrapedPage,
   ReadingMetrics,
@@ -44,7 +47,31 @@ import type {
   SensorConfig,
   MessageResponse,
   CapturePayload,
+  Marker,
 } from '@/types';
+
+// ── Marker Cache ─────────────────────────────────────
+
+const MARKER_CACHE_TTL_MS = 1000 * 60 * 5; // 5 minutes
+const markerCache: Record<number, { markers: Marker[]; timestamp: number }> = {};
+
+async function getCachedMarkers(spaceId: number): Promise<Marker[]> {
+  const now = Date.now();
+  const cached = markerCache[spaceId];
+
+  if (cached && (now - cached.timestamp < MARKER_CACHE_TTL_MS)) {
+    return cached.markers;
+  }
+
+  try {
+    const markers = await auth.fetchMarkersFromSupabase(spaceId);
+    markerCache[spaceId] = { markers, timestamp: now };
+    return markers;
+  } catch (error) {
+    loggers.background.warn('Failed to fetch markers', { spaceId, error });
+    return cached ? cached.markers : []; // Return stale if avail, else empty
+  }
+}
 
 // ── Recent Captures (local storage) ──────────────────
 
@@ -56,7 +83,13 @@ async function getRecentCaptures(): Promise<RecentCapture[]> {
 async function addRecentCapture(capture: RecentCapture): Promise<void> {
   const recent = await getRecentCaptures();
   recent.unshift(capture);
-  await chrome.storage.local.set({ recentCaptures: recent.slice(0, 30) });
+  const truncated = recent.slice(0, 30);
+  await chrome.storage.local.set({ recentCaptures: truncated });
+  loggers.background.debug('Stored recent capture', { 
+    url: capture.url, 
+    totalRecent: truncated.length,
+    spaceId: capture.spaceId 
+  });
 }
 
 function normalizeUrlForDedup(rawUrl: string): string {
@@ -99,55 +132,157 @@ function isSystemPage(url: string): boolean {
   }
 }
 
-async function ensureContentScript(tabId: number): Promise<void> {
-  const manifest = chrome.runtime.getManifest();
-  const contentScriptFile = manifest.content_scripts?.[0]?.js?.[0];
-  if (!contentScriptFile) return;
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: [contentScriptFile],
-  });
+async function ensureContentScript(tabId: number): Promise<boolean> {
+  try {
+    const manifest = chrome.runtime.getManifest();
+    const contentScriptFile = manifest.content_scripts?.[0]?.js?.[0];
+    if (!contentScriptFile) {
+      loggers.background.warn('Content script file not found in manifest');
+      return false;
+    }
+    
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: [contentScriptFile],
+    });
+    
+    loggers.background.debug('Content script injected successfully', { tabId });
+    return true;
+  } catch (error) {
+    loggers.background.warn('Failed to inject content script', { 
+      tabId, 
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return false;
+  }
 }
 
 async function scrapeTabWithFallback(
   tabId: number
 ): Promise<{ page: ScrapedPage; metrics: ReadingMetrics; engagement: EngagementLevel } | null> {
   try {
+    // Attempt 1: Direct message (content script may already be loaded)
     const resp = await chrome.tabs.sendMessage(tabId, { type: 'SCRAPE_PAGE' });
     if (resp?.success && resp.data) {
+      loggers.capture.debug('Page scraped successfully (content script already loaded)');
       return resp.data;
     }
-  } catch {
-    // Continue to injection fallback.
+  } catch (firstError) {
+    loggers.capture.debug('First scrape attempt failed, trying injection...', {
+      error: firstError instanceof Error ? firstError.message : String(firstError)
+    });
   }
 
+  // Attempt 2: Inject content script and retry
   try {
-    await ensureContentScript(tabId);
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    const retryResp = await chrome.tabs.sendMessage(tabId, { type: 'SCRAPE_PAGE' });
-    if (retryResp?.success && retryResp.data) {
-      return retryResp.data;
+    const injected = await ensureContentScript(tabId);
+    if (!injected) {
+      loggers.capture.warn('Failed to inject content script');
+      return null;
     }
-  } catch {
+
+    // Wait for content script to initialize
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    try {
+      const retryResp = await chrome.tabs.sendMessage(tabId, { type: 'SCRAPE_PAGE' });
+      if (retryResp?.success && retryResp.data) {
+        loggers.capture.debug('Page scraped successfully (after injection)');
+        return retryResp.data;
+      }
+    } catch (retryError) {
+      loggers.capture.warn('Scrape failed even after injection', {
+        error: retryError instanceof Error ? retryError.message : String(retryError)
+      });
+      return null;
+    }
+  } catch (injectionError) {
+    loggers.capture.warn('Content script injection failed', {
+      error: injectionError instanceof Error ? injectionError.message : String(injectionError)
+    });
     return null;
   }
 
   return null;
 }
 
-async function resolveAutoCaptureSpaceId(config: SensorConfig): Promise<number | null> {
-  if (typeof config.autoCaptureSpaceId === 'number' && config.autoCaptureSpaceId > 0) {
-    return config.autoCaptureSpaceId;
-  }
-
+async function resolveAutoCaptureSpaceId(
+  config: SensorConfig,
+  pageSummary?: { content: string; title: string; url: string }
+): Promise<number | null> {
   try {
     const spaces = await fetchSpaces();
-    if (spaces.length === 1) {
-      await setConfig({ autoCaptureSpaceId: spaces[0].id });
-      return spaces[0].id;
+    if (spaces.length === 0) return null;
+
+    // If no page content available, fallback to most recent space or pinned space
+    if (!pageSummary) {
+      // Prefer pinned space if configured and still exists
+      if (typeof config.autoCaptureSpaceId === 'number' && config.autoCaptureSpaceId > 0) {
+        const pinnedExists = spaces.some(s => s.id === config.autoCaptureSpaceId);
+        if (pinnedExists) {
+          return config.autoCaptureSpaceId;
+        }
+      }
+      // Otherwise use most recent
+      return spaces[0]?.id || null;
     }
-  } catch {
-    // Ignore auth/network failures and skip auto capture.
+
+    // Smart Resolution: Check relevance against ALL spaces
+    // This allows "automatic" detection of the correct space
+    let bestSpaceId = spaces[0].id;
+    let maxConfidence = -1;
+    let bestSpaceHasMarkers = false;
+
+    for (const space of spaces) {
+      try {
+        const markers = await getCachedMarkers(space.id);
+        const hasMarkers = markers.length > 0;
+        
+        const score = calculateRelevance(
+          pageSummary.content,
+          pageSummary.title,
+          pageSummary.url,
+          markers
+        );
+
+        // Prefer spaces with markers and higher confidence
+        if (score.confidence > maxConfidence) {
+          maxConfidence = score.confidence;
+          bestSpaceId = space.id;
+          bestSpaceHasMarkers = hasMarkers;
+        }
+      } catch (err) {
+        // Continue checking others
+      }
+    }
+
+    // If we found a good match (space with markers and decent confidence), use it
+    // This ensures multi-space users get intelligent routing instead of pinned-space dominance
+    if (bestSpaceHasMarkers && maxConfidence > 0.1) {
+      loggers.background.debug('Auto-capture routed to best-match space', {
+        spaceId: bestSpaceId,
+        confidence: maxConfidence,
+      });
+      return bestSpaceId;
+    }
+
+    // Fallback: use pinned space if configured, otherwise use most recent
+    if (typeof config.autoCaptureSpaceId === 'number' && config.autoCaptureSpaceId > 0) {
+      const pinnedExists = spaces.some(s => s.id === config.autoCaptureSpaceId);
+      if (pinnedExists) {
+        loggers.background.debug('Auto-capture using pinned space (no good match found)', {
+          spaceId: config.autoCaptureSpaceId,
+        });
+        return config.autoCaptureSpaceId;
+      }
+    }
+
+    // Last resort: most recent space
+    return spaces[0]?.id || null;
+
+  } catch (err) {
+    // Ignore auth/network failures
+    loggers.background.warn('Failed to resolve auto-capture space', { err });
   }
 
   return null;
@@ -181,11 +316,7 @@ async function runAutoCaptureCycle(): Promise<void> {
     return;
   }
 
-  const spaceId = await resolveAutoCaptureSpaceId(config);
-  if (!spaceId) {
-    return;
-  }
-
+  // SCRAPE FIRST to get content for smart resolution
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const tabUrl = tab?.url ?? tab?.pendingUrl ?? '';
   if (!tab?.id || !tabUrl || !isHttpUrl(tabUrl)) {
@@ -198,14 +329,33 @@ async function runAutoCaptureCycle(): Promise<void> {
 
   const scraped = await scrapeTabWithFallback(tab.id);
   if (!scraped) {
+    loggers.capture.debug('Auto-capture skipped: failed to scrape page', { url: tab.url });
     return;
   }
 
   const { page, metrics, engagement } = scraped;
+
+  // NOW resolve space using the scraped content
+  const spaceId = await resolveAutoCaptureSpaceId(config, page);
+  if (!spaceId) {
+    loggers.capture.debug('Auto-capture skipped: no space configured');
+    return;
+  }
+
   if (page.wordCount < config.minWordCount) {
+    loggers.capture.debug('Auto-capture skipped: word count too low', {
+      url: page.url,
+      wordCount: page.wordCount,
+      minRequired: config.minWordCount
+    });
     return;
   }
   if (metrics.dwellTimeMs < config.minDwellTimeMs) {
+    loggers.capture.debug('Auto-capture skipped: dwell time too short', {
+      url: page.url,
+      dwellTime: metrics.dwellTimeMs,
+      minRequired: config.minDwellTimeMs
+    });
     return;
   }
 
@@ -215,17 +365,57 @@ async function runAutoCaptureCycle(): Promise<void> {
   //   return;
   // }
 
-  let classification: ClassificationResult;
-  try {
-    classification = await classifyContent(page, metrics, engagement);
-  } catch (error) {
-    console.warn('[Misir BG] Auto-capture classify failed, using fallback', error);
-    classification = fallbackClassification(metrics, engagement);
-  }
+  // ── Local Relevance Scoring ──
+  // Replaces backend classification
 
-  if (classification.confidence < config.autoCaptureConfidenceThreshold) {
+  let classification: ClassificationResult;
+  let markers: Marker[] = [];
+
+  try {
+    markers = await getCachedMarkers(spaceId);
+
+    // 1. Calculate relevance locally
+    const relevance = calculateRelevance(
+      page.content, // Use full text content
+      page.title,
+      page.url,
+      markers
+    );
+
+    loggers.capture.debug('Local relevance score', {
+      url: page.url,
+      confidence: relevance.confidence,
+      matched: relevance.matchedMarkers
+    });
+
+    if (relevance.confidence < config.autoCaptureConfidenceThreshold) {
+      loggers.capture.debug('Auto-capture skipped: confidence below threshold', {
+        url: page.url,
+        confidence: relevance.confidence,
+        threshold: config.autoCaptureConfidenceThreshold,
+        reason: relevance.matchedMarkers.length === 0 ? 'No markers matched' : 'Low total weight'
+      });
+      return;
+    }
+
+    // 2. Construct classification result locally
+    // We assume 'article' and 'web' for now as we lack local classifier for types
+    classification = {
+      engagementLevel: engagement, // Trust the client's dwell/scroll engagement
+      contentSource: 'web',
+      contentType: 'article',
+      readingDepth: metrics.readingDepth,
+      confidence: relevance.confidence,
+      keywords: relevance.matchedMarkers,
+      nlpAvailable: true,
+    };
+
+  } catch (error) {
+    loggers.capture.warn('Local scoring failed, skipping capture', { error });
     return;
   }
+
+
 
   // Latent check removed per user request - capture instantly if relevant
   // if (classification.engagementLevel === 'latent') {
@@ -235,7 +425,7 @@ async function runAutoCaptureCycle(): Promise<void> {
   const payload = buildCapturePayload(spaceId, page, metrics, classification);
   try {
     await captureArtifact(payload);
-    await addRecentCapture({
+    const capture: RecentCapture = {
       url: page.url,
       title: page.title,
       domain: page.domain,
@@ -243,16 +433,22 @@ async function runAutoCaptureCycle(): Promise<void> {
       engagementLevel: classification.engagementLevel,
       contentType: classification.contentType,
       capturedAt: new Date().toISOString(),
-    });
-    console.log('[Misir BG] Auto-captured relevant page', {
-      spaceId,
+    };
+    await addRecentCapture(capture);
+    
+    // Notify popup if it's open
+    notifyPopupsOfCapture(capture);
+    
+    loggers.capture.info('Auto-captured relevant page', {
       url: page.url,
       confidence: classification.confidence,
+      spaceId,
+      engagement: classification.engagementLevel,
     });
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
     const queueId = await addToQueue(payload, errorMsg);
-    console.warn('[Misir BG] Auto-capture failed, added to queue:', queueId, errorMsg);
+    loggers.queue.warn('Auto-capture failed, added to queue', { queueId, error: errorMsg });
   }
 }
 
@@ -274,6 +470,23 @@ function buildCapturePayload(
     engagement_level: classification.engagementLevel,
     content_source: classification.contentSource,
   };
+}
+
+/**
+ * Notify all open popups that a capture completed
+ * This ensures the UI updates in real-time
+ */
+function notifyPopupsOfCapture(capture: RecentCapture) {
+  try {
+    chrome.runtime.sendMessage({
+      type: 'CAPTURE_COMPLETED',
+      data: capture,
+    }).catch(() => {
+      // Ignore if popup not open - this is expected
+    });
+  } catch (err) {
+    // Silently ignore - pop may not be open
+  }
 }
 
 function fallbackClassification(
@@ -322,12 +535,23 @@ chrome.runtime.onMessage.addListener(
             const engagement = msg.engagement as EngagementLevel;
             const spaceId = msg.spaceId as number;
 
-            // 1. Run backend classification
+            // 1. Run local relevance scoring
             let classification: ClassificationResult;
             try {
-              classification = await classifyContent(page, metrics, engagement);
+              const markers = await getCachedMarkers(spaceId);
+              const relevance = calculateRelevance(page.content, page.title, page.url, markers);
+
+              classification = {
+                engagementLevel: engagement,
+                contentSource: 'web',
+                contentType: 'article',
+                readingDepth: metrics.readingDepth,
+                confidence: relevance.confidence,
+                keywords: relevance.matchedMarkers,
+                nlpAvailable: true,
+              };
             } catch (error) {
-              console.warn('[Misir BG] Backend classify failed, using fallback', error);
+              loggers.capture.warn('Local scoring failed, using fallback', { error });
               classification = fallbackClassification(metrics, engagement);
             }
 
@@ -339,7 +563,7 @@ chrome.runtime.onMessage.addListener(
               const result = await captureArtifact(payload);
 
               // 4. Store recent capture
-              await addRecentCapture({
+              const capture: RecentCapture = {
                 url: page.url,
                 title: page.title,
                 domain: page.domain,
@@ -347,7 +571,11 @@ chrome.runtime.onMessage.addListener(
                 engagementLevel: classification.engagementLevel,
                 contentType: classification.contentType,
                 capturedAt: new Date().toISOString(),
-              });
+              };
+              await addRecentCapture(capture);
+
+              // 5. Notify popup if it's open
+              notifyPopupsOfCapture(capture);
 
               return {
                 success: true,
@@ -362,7 +590,7 @@ chrome.runtime.onMessage.addListener(
               const errorMsg = error instanceof Error ? error.message : 'Unknown error';
               const queueId = await addToQueue(payload, errorMsg);
 
-              console.warn('[Misir BG] Capture failed, added to queue:', queueId, errorMsg);
+              loggers.queue.warn('Capture failed, added to queue', { queueId, error: errorMsg });
 
               return {
                 success: false,
@@ -390,8 +618,11 @@ chrome.runtime.onMessage.addListener(
 
           // ── NLP Status ─────────────────
           case 'GET_NLP_STATUS': {
-            const status = await getClassifierStatus();
-            return { success: true, data: status };
+            // Always available clients-side now
+            return {
+              success: true,
+              data: { available: true, mode: 'client-wink-nlp' }
+            };
           }
 
           // ── Classify (without capture) ─
@@ -400,10 +631,29 @@ chrome.runtime.onMessage.addListener(
             const mt = msg.metrics as ReadingMetrics;
             const eng = msg.engagement as EngagementLevel;
             let cls: ClassificationResult;
+
+            // Best-effort local scoring: try to use auto-capture space
             try {
-              cls = await classifyContent(pg, mt, eng);
+              const config = await getConfig();
+              const spaceId = await resolveAutoCaptureSpaceId(config, pg);
+
+              if (spaceId) {
+                const markers = await getCachedMarkers(spaceId);
+                const relevance = calculateRelevance(pg.content, pg.title, pg.url, markers);
+                cls = {
+                  engagementLevel: eng,
+                  contentSource: 'web',
+                  contentType: 'article',
+                  readingDepth: mt.readingDepth,
+                  confidence: relevance.confidence,
+                  keywords: relevance.matchedMarkers,
+                  nlpAvailable: true,
+                };
+              } else {
+                cls = fallbackClassification(mt, eng);
+              }
             } catch (error) {
-              console.warn('[Misir BG] CLASSIFY_CONTENT failed, using fallback', error);
+              loggers.capture.warn('Local scoring failed in CLASSIFY_CONTENT', { error });
               cls = fallbackClassification(mt, eng);
             }
             return { success: true, data: cls };
@@ -501,11 +751,26 @@ chrome.runtime.onMessage.addListener(
             }
           }
 
+          // ── Auto-detect best space based on page content ─────
+          case 'GET_BEST_SPACE': {
+            try {
+              const config = await getConfig();
+              const pageSummary = msg.page as { content: string; title: string; url: string };
+              const bestSpaceId = await resolveAutoCaptureSpaceId(config, pageSummary);
+              return { success: true, data: bestSpaceId };
+            } catch (err) {
+              return {
+                success: false,
+                error: err instanceof Error ? err.message : 'Failed to get best space',
+              };
+            }
+          }
+
           default:
             return { success: false, error: `Unknown: ${msg.type}` };
         }
       } catch (err) {
-        console.error('[Misir BG]', err);
+        loggers.background.error('Background error', { error: err });
         return {
           success: false,
           error: err instanceof Error ? err.message : 'Unknown error',
@@ -525,32 +790,10 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     // Wait a brief moment for dynamic content/readability
     setTimeout(() => {
       runAutoCaptureCycle().catch(err => {
-        console.warn('[Misir BG] Instant capture failed:', err);
+        loggers.capture.warn('Instant capture failed', { error: err });
       });
     }, 3000);
   }
-});
-
-// ── Install Handler ──────────────────────────────────
-
-chrome.runtime.onInstalled.addListener((details) => {
-  console.log('[Misir] Extension installed:', details.reason);
-  if (details.reason === 'install') {
-    // Initialize config WITHOUT userId — forces login screen
-    // userId will be set by auth module after sign-in
-    chrome.storage.local.set({
-      apiUrl: 'http://localhost:8000/api/v1',
-      enabled: true,
-      minWordCount: 50,
-      minDwellTimeMs: 3000,
-      autoCaptureEnabled: false,
-      autoCaptureConfidenceThreshold: 0.50,
-      autoCaptureCooldownMs: 0, // Default to continuous updates
-      recentCaptures: [],
-    });
-  }
-  // Attempt to process any queued captures after install/update
-  processQueueIfOnline('onInstalled').catch(() => { });
 });
 
 // ── Offline Queue Processing (MV3-safe) ─────────────
@@ -562,42 +805,72 @@ function isOnline(): boolean {
 
 async function processQueueIfOnline(trigger: string): Promise<void> {
   if (!isOnline()) {
-    console.log(`[Misir] Queue skipped (${trigger}): offline`);
+    loggers.queue.debug('Queue skipped: offline', { trigger });
     return;
   }
   try {
     const result = await processQueue(captureArtifact);
     if (result.processed > 0) {
-      console.log('[Misir] Queue processed:', { trigger, ...result });
+      loggers.queue.info('Queue processed', { trigger, ...result });
     }
   } catch (err) {
-    console.error('[Misir] Failed to process queue:', err);
+    loggers.queue.error('Failed to process queue', { error: err });
   }
 
   try {
     await runAutoCaptureCycle();
   } catch (err) {
-    console.error('[Misir] Auto-capture cycle failed:', err);
+    loggers.background.error('Auto-capture cycle failed', { error: err });
   }
 }
 
-chrome.runtime.onStartup.addListener(() => {
-  processQueueIfOnline('onStartup').catch(() => { });
-});
-
 // ── Pulse alarm (keep service worker alive) ──────────
 
-// Delay first pulse by 5 minutes to avoid network calls on startup
-chrome.alarms.create('misir-pulse', { delayInMinutes: 5, periodInMinutes: 1 });
+async function setupPulse() {
+  const alarm = await chrome.alarms.get('misir-pulse');
+  if (!alarm) {
+    // 1 min delay, 1 min period
+    chrome.alarms.create('misir-pulse', { delayInMinutes: 1, periodInMinutes: 1 });
+    loggers.background.debug('Pulse alarm created');
+  }
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  loggers.background.info('Extension installed');
+  processQueueIfOnline('onInstalled').catch(() => { });
+  setupPulse().catch(err => loggers.background.warn('Failed to setup pulse', { error: err }));
+
+  // Initialize config if fresh install
+  chrome.storage.local.get(['enabled'], (result) => {
+    if (result.enabled === undefined) {
+      chrome.storage.local.set({
+        apiUrl: 'http://localhost:8000/api/v1',
+        enabled: true,
+        minWordCount: 50,
+        minDwellTimeMs: 3000,
+        autoCaptureEnabled: false,
+        autoCaptureConfidenceThreshold: 0.50,
+        autoCaptureCooldownMs: 0,
+        recentCaptures: [],
+      });
+    }
+  });
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  processQueueIfOnline('onStartup').catch(() => { });
+  setupPulse().catch(() => { });
+});
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'misir-pulse') {
-    console.log('[Misir] Pulse ♥', new Date().toISOString());
-    // Proactively refresh token if needed (silent fail)
+    loggers.background.debug('Pulse ♥', { timestamp: new Date().toISOString() });
     auth.refreshSession().catch((err: any) => {
-      console.warn('[Misir] Pulse refresh failed:', err);
+      loggers.background.warn('Pulse refresh failed', { error: err });
     });
+    // Triggers auto-capture cycle to update metrics for active tabs
     processQueueIfOnline('alarm').catch(() => { });
   }
 });
 
-console.log('[Misir] Background service worker started');
+loggers.background.info('Background service worker started');

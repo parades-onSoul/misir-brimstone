@@ -45,38 +45,43 @@ function normalizeMarker(marker: string): string {
   return marker.toLowerCase().trim();
 }
 
-function dedupeSubspaceMarkers(markers: string[]): string[] {
-  return Array.from(
-    new Set(
-      markers
-        .map((m) => normalizeMarker(m))
-        .filter((m) => m.length > 0)
-    )
-  );
+function dedupeSubspaceMarkers(markers: Array<{ text: string; weight: number }>): Array<{ text: string; weight: number }> {
+  const seen = new Set<string>();
+  return markers.filter((m) => {
+    const normalized = normalizeMarker(m.text);
+    if (normalized.length === 0 || seen.has(normalized)) {
+      return false;
+    }
+    seen.add(normalized);
+    return true;
+  });
 }
 
 function filterAndLimitMarkers(
-  markers: string[],
+  markers: Array<{ text: string; weight: number }>,
   globalMarkers: Set<string>,
   mode: PromptMode
-): string[] {
+): Array<{ text: string; weight: number }> {
   const limits = MODE_MARKER_LIMITS[mode];
-  const cleaned: string[] = [];
+  const cleaned: Array<{ text: string; weight: number }> = [];
 
-  for (const marker of dedupeSubspaceMarkers(markers)) {
-    if (BANNED_MARKERS.includes(marker)) {
+  for (const markerObj of dedupeSubspaceMarkers(markers)) {
+    const marker = markerObj.text;
+    const normalized = normalizeMarker(marker);
+
+    if (BANNED_MARKERS.includes(normalized)) {
       console.warn(`Filtering banned marker: "${marker}"`);
       continue;
     }
 
     // Keep exact normalized global uniqueness only.
-    if (globalMarkers.has(marker)) {
+    if (globalMarkers.has(normalized)) {
       console.warn(`Filtering duplicate marker across subspaces: "${marker}"`);
       continue;
     }
 
-    cleaned.push(marker);
-    globalMarkers.add(marker);
+    cleaned.push(markerObj);
+    globalMarkers.add(normalized);
 
     if (cleaned.length >= limits.max) {
       break;
@@ -130,7 +135,13 @@ export function validateGroqOutput(
   const markerLimits = MODE_MARKER_LIMITS[mode];
 
   for (const subspace of data) {
-    const cleanedMarkers = filterAndLimitMarkers(subspace.markers as string[], allMarkersGlobal, mode);
+    // Ensure markers are objects with text/weight (backwards compatibility for strings)
+    const rawMarkers: Array<{ text: string; weight: number }> = (subspace.markers as any[]).map(m => {
+      if (typeof m === 'string') return { text: m, weight: 1.0 };
+      return { text: m.text, weight: m.weight || 1.0 };
+    });
+
+    const cleanedMarkers = filterAndLimitMarkers(rawMarkers, allMarkersGlobal, mode);
 
     if (cleanedMarkers.length < markerLimits.min) {
       underfilledSubspaces.push(
@@ -177,7 +188,7 @@ export function validateGroqOutput(
  */
 export function isQualityMarker(marker: string): boolean {
   const cleaned = normalizeMarker(marker);
-  
+
   // Too short
   if (cleaned.length < 2) {
     return false;
@@ -210,7 +221,7 @@ export function applyMarkerRepairs(
 
   for (const subspace of subspaces) {
     for (const marker of subspace.markers) {
-      globallyUsed.add(normalizeMarker(marker));
+      globallyUsed.add(normalizeMarker(marker.text));
     }
   }
 
@@ -222,7 +233,7 @@ export function applyMarkerRepairs(
     }
 
     const updatedMarkers = [...subspace.markers];
-    const localSet = new Set(updatedMarkers.map((m) => normalizeMarker(m)));
+    const localSet = new Set(updatedMarkers.map((m) => normalizeMarker(m.text)));
 
     for (const rawCandidate of repairCandidates) {
       if (updatedMarkers.length >= limits.max) {
@@ -237,7 +248,8 @@ export function applyMarkerRepairs(
         continue;
       }
 
-      updatedMarkers.push(candidate);
+      const newMarker = { text: candidate, weight: 0.8 }; // Default weight for repairs
+      updatedMarkers.push(newMarker);
       localSet.add(candidate);
       globallyUsed.add(candidate);
     }
